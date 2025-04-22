@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
-import { Upload, Download, ArrowRight, Loader2, FileImage, X, CheckCircle, AlertCircle, Archive } from 'lucide-react';
+import { Upload, Download, ArrowRight, Loader2, FileImage, X, CheckCircle, AlertCircle, Archive, Info } from 'lucide-react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver'; // file-saver is often used with jszip
 
@@ -25,7 +25,7 @@ interface ImageFileState {
     optimizedBlob?: Blob;
     optimizedSize?: number;
     optimizedDataUrl?: string;
-    status: 'pending' | 'optimizing' | 'done' | 'error';
+    status: 'pending' | 'optimizing' | 'done' | 'error' | 'no_reduction'; // Added 'no_reduction' status
     error?: string;
 }
 
@@ -99,14 +99,14 @@ const Index: React.FC = () => {
     const optimizeSingleImage = (fileName: string): Promise<void> => {
         return new Promise((resolve, reject) => {
             const fileState = imageFiles[fileName];
-            if (!fileState || fileState.status !== 'pending') {
-                resolve(); // Already processed or invalid state
+            if (!fileState || !['pending', 'error', 'no_reduction'].includes(fileState.status)) { // Allow re-optimizing errors/no_reduction
+                resolve();
                 return;
             }
 
             setImageFiles(prev => ({
                 ...prev,
-                [fileName]: { ...prev[fileName], status: 'optimizing' }
+                [fileName]: { ...prev[fileName], status: 'optimizing', error: undefined } // Reset error on retry
             }));
             console.log("Starting optimization for:", fileName);
 
@@ -136,6 +136,28 @@ const Index: React.FC = () => {
 
                     canvas.toBlob((blob) => {
                         if (blob) {
+                            console.log("Generated blob:", fileName, blob.size);
+
+                            // *** PNG Size Check ***
+                            if (mimeType === 'image/png' && blob.size >= fileState.originalSize) {
+                                console.log("PNG optimization did not reduce size for:", fileName);
+                                setImageFiles(prev => ({
+                                    ...prev,
+                                    [fileName]: {
+                                        ...prev[fileName],
+                                        status: 'no_reduction', // Set specific status
+                                        optimizedBlob: undefined, // Don't store the larger blob
+                                        optimizedSize: undefined,
+                                        optimizedDataUrl: undefined, // No preview needed if not reduced
+                                        error: 'File size did not decrease',
+                                    }
+                                }));
+                                resolve(); // Resolve successfully, but indicate no reduction
+                                return;
+                            }
+                            // *** End PNG Size Check ***
+
+
                             console.log("Optimized blob created:", fileName, blob.size);
                             const dataUrlReader = new FileReader();
                             dataUrlReader.onloadend = () => {
@@ -201,20 +223,19 @@ const Index: React.FC = () => {
     };
 
     const optimizeAllImages = async () => {
-        const pendingFiles = Object.keys(imageFiles).filter(name => imageFiles[name].status === 'pending');
-        if (pendingFiles.length === 0) {
-            toast.info("No images pending optimization.");
+        // Include pending, error, and no_reduction states for potential re-optimization
+        const filesToProcess = Object.keys(imageFiles).filter(name => ['pending', 'error', 'no_reduction'].includes(imageFiles[name].status));
+        if (filesToProcess.length === 0) {
+            toast.info("No images requiring optimization.");
             return;
         }
 
         setIsProcessing(true);
-        toast.info(`Optimizing ${pendingFiles.length} image(s)...`);
+        toast.info(`Optimizing ${filesToProcess.length} image(s)...`);
 
-        const optimizationPromises = pendingFiles.map(fileName =>
+        const optimizationPromises = filesToProcess.map(fileName =>
             optimizeSingleImage(fileName).catch(error => {
-                // Error is handled within optimizeSingleImage by updating state
                 console.warn(`Optimization failed for ${fileName}:`, error.message);
-                // Ensure the promise resolves even on error so Promise.all completes
                 return Promise.resolve();
             })
         );
@@ -223,7 +244,6 @@ const Index: React.FC = () => {
             await Promise.all(optimizationPromises);
             toast.success("Optimization process completed.");
         } catch (error) {
-            // This catch might not be strictly necessary if individual errors are handled
             console.error("Error during batch optimization:", error);
             toast.error("An error occurred during batch optimization.");
         } finally {
@@ -233,11 +253,12 @@ const Index: React.FC = () => {
 
      const handleDownloadAll = async () => {
         const optimizedEntries = Object.entries(imageFiles).filter(
+            // Only include 'done' status for download
             ([, state]) => state.status === 'done' && state.optimizedBlob
         );
 
         if (optimizedEntries.length === 0) {
-            toast.info("No optimized images to download.");
+            toast.info("No successfully optimized images to download.");
             return;
         }
 
@@ -278,7 +299,9 @@ const Index: React.FC = () => {
         toast.info("Cleared all images.");
     };
 
-    const filesToOptimizeCount = Object.values(imageFiles).filter(f => f.status === 'pending').length;
+    // Count files needing processing (pending, error, no_reduction)
+    const filesToProcessCount = Object.values(imageFiles).filter(f => ['pending', 'error', 'no_reduction'].includes(f.status)).length;
+    // Count files successfully optimized and ready for download
     const optimizedFilesCount = Object.values(imageFiles).filter(f => f.status === 'done' && f.optimizedBlob).length;
 
     return (
@@ -317,7 +340,7 @@ const Index: React.FC = () => {
                     {Object.keys(imageFiles).length > 0 && (
                         <div className="space-y-4">
                              <div className="flex justify-between items-center gap-2 flex-wrap">
-                                <Button onClick={optimizeAllImages} disabled={isProcessing || filesToOptimizeCount === 0}>
+                                <Button onClick={optimizeAllImages} disabled={isProcessing || filesToProcessCount === 0}>
                                     {isProcessing ? (
                                         <>
                                             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -326,7 +349,7 @@ const Index: React.FC = () => {
                                     ) : (
                                         <>
                                             <ArrowRight className="mr-2 h-4 w-4" />
-                                            Optimize {filesToOptimizeCount > 0 ? `${filesToOptimizeCount} Pending` : 'Images'}
+                                            Optimize {filesToProcessCount > 0 ? `${filesToProcessCount} Pending/Retry` : 'Images'}
                                         </>
                                     )}
                                 </Button>
@@ -346,11 +369,14 @@ const Index: React.FC = () => {
                                     {Object.entries(imageFiles).map(([name, state]) => (
                                         <div key={name} className="flex items-center justify-between gap-2 p-2 rounded bg-secondary/50">
                                             <div className="flex items-center gap-2 overflow-hidden">
-                                                {state.status === 'optimizing' && <Loader2 className="h-4 w-4 animate-spin flex-shrink-0" />}
+                                                {/* Status Icons */}
+                                                {state.status === 'optimizing' && <Loader2 className="h-4 w-4 animate-spin flex-shrink-0 text-blue-500" />}
                                                 {state.status === 'done' && !state.error && <CheckCircle className="h-4 w-4 text-green-600 flex-shrink-0" />}
-                                                {state.status === 'error' && <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" />}
-                                                {(state.status === 'pending' || (state.status === 'done' && state.error === 'Preview generation failed')) && <FileImage className="h-4 w-4 text-muted-foreground flex-shrink-0" />}
+                                                {state.status === 'error' && <AlertCircle className="h-4 w-4 text-red-600 flex-shrink-0" title={state.error}/>}
+                                                {state.status === 'no_reduction' && <Info className="h-4 w-4 text-orange-500 flex-shrink-0" title="No size reduction"/>}
+                                                {state.status === 'pending' && <FileImage className="h-4 w-4 text-muted-foreground flex-shrink-0" />}
 
+                                                {/* Preview Image */}
                                                 {state.optimizedDataUrl && state.status === 'done' ? (
                                                     <img src={state.optimizedDataUrl} alt="preview" className="h-8 w-8 object-cover rounded flex-shrink-0 border" />
                                                 ) : (
@@ -358,6 +384,8 @@ const Index: React.FC = () => {
                                                         <FileImage className="h-4 w-4 text-muted-foreground" />
                                                      </div>
                                                 )}
+
+                                                {/* File Info */}
                                                 <div className="flex flex-col overflow-hidden">
                                                     <span className="text-sm font-medium truncate" title={name}>{name}</span>
                                                     <span className="text-xs text-muted-foreground">
@@ -371,7 +399,8 @@ const Index: React.FC = () => {
                                                                 </span>
                                                             </>
                                                         )}
-                                                         {state.status === 'error' && <span className="text-red-600 ml-2">Error: {state.error}</span>}
+                                                         {state.status === 'no_reduction' && <span className="text-orange-500 ml-2">(No reduction)</span>}
+                                                         {state.status === 'error' && <span className="text-red-600 ml-2">Error</span>}
                                                     </span>
                                                 </div>
                                             </div>
