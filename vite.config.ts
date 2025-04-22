@@ -7,16 +7,17 @@ export default defineConfig({
   plugins: [
     react(),
     nodePolyfills({
-      // Options (optional):
-      // To exclude specific polyfills, add them to this list.
-      // exclude: [],
+      // Options:
+      // Explicitly exclude the 'os' polyfill as we handle concurrency manually
+      // and it might be causing the 'navigator' property error.
+      exclude: ['os'],
       // Whether to polyfill `node:` protocol imports.
       protocolImports: true,
-      // Whether to polyfill specific globals.
+      // Keep other globals polyfilled as they might be needed by squoosh or other deps
       globals: {
-        Buffer: true, // Default: true. Ex: Buffer.from('hello')
-        global: true, // Default: true. Ex: global.Buffer
-        process: true, // Default: true. Ex: process.env.NODE_ENV
+        Buffer: true,
+        global: true,
+        process: true,
       },
     }),
   ],
@@ -25,8 +26,4 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  // Optional: Optimize @squoosh/lib dependencies if needed, but polyfills plugin should handle most cases.
-  // optimizeDeps: {
-  //   include: ['@squoosh/lib']
-  // }
 })
