@@ -71,12 +71,16 @@ const Index: React.FC = () => {
       setOriginalDimensions(origDims);
       console.log(`Original file: ${file.name}, Size: ${file.size / 1024} KB, Type: ${file.type}, Dims: ${origDims.width}x${origDims.height}`);
 
+      const isLossyFormat = file.type === 'image/jpeg' || file.type === 'image/webp';
+
       const options = {
-        maxSizeMB: 1,
+        // Apply maxSizeMB only for lossy formats where quality adjustment is expected
+        maxSizeMB: isLossyFormat ? 1 : undefined,
         // maxWidthOrHeight: 1920, // Dimension constraint removed
         useWebWorker: true,
-        initialQuality: (file.type === 'image/jpeg' || file.type === 'image/webp') ? 0.7 : undefined,
-        // alwaysKeepResolution: true, // This option can sometimes help
+        // Apply initialQuality only for lossy formats
+        initialQuality: isLossyFormat ? 0.7 : undefined,
+        // alwaysKeepResolution: true, // Might not be needed now
       };
 
       // Remove undefined keys
@@ -118,7 +122,7 @@ const Index: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, []); // Removed dependencies as refs handle the URL cleanup logic now
+  }, []); // Empty dependency array
 
   const handleDownload = () => {
     if (compressedFileForDownload) {
@@ -128,8 +132,6 @@ const Index: React.FC = () => {
 
   // Clean up object URLs on component unmount
   useEffect(() => {
-    // The refs contain the latest URLs that need cleanup.
-    // This cleanup runs only once when the component unmounts.
     return () => {
       if (originalUrlRef.current) {
         console.log("Unmounting: Revoking original URL", originalUrlRef.current);
@@ -158,7 +160,7 @@ const Index: React.FC = () => {
       <Card className="w-full max-w-3xl">
         <CardHeader>
           <CardTitle>Image Optimizer</CardTitle>
-          <CardDescription>Upload an image (JPG, PNG, WEBP) to compress it without changing dimensions.</CardDescription>
+          <CardDescription>Upload JPG, PNG, or WEBP. JPEGs/WEBPs target &lt;1MB size. PNGs use lossless compression.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid w-full max-w-sm items-center gap-1.5 mx-auto">
@@ -181,7 +183,6 @@ const Index: React.FC = () => {
             </Alert>
           )}
 
-          {/* Use state for rendering, refs for cleanup */}
           {(originalImageUrl || compressedImageUrl) && !error && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start pt-4">
               {originalImageUrl && (
@@ -224,10 +225,9 @@ const Index: React.FC = () => {
         <Terminal className="h-4 w-4" />
         <AlertTitle>How it works</AlertTitle>
         <AlertDescription>
-          Images are compressed directly in your browser using the{' '}
-          <code className="font-mono text-sm">browser-image-compression</code> library.
-          JPEGs/WEBPs use lossy compression (quality adjusted), while PNGs use lossless compression.
-          The image dimensions are preserved. The target max output size is ~1MB. No data is sent to any server.
+          Images are compressed in your browser. JPEGs/WEBPs use lossy compression targeting &lt;1MB size (quality: ~0.7).
+          PNGs use standard lossless compression without a size target to preserve quality.
+          Image dimensions are always preserved. No data is sent to any server.
         </AlertDescription>
       </Alert>
     </div>
