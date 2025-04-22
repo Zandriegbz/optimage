@@ -14,7 +14,8 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import JSZip from 'jszip';
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils"; // Import cn utility
+import { cn } from "@/lib/utils";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Import Tabs components
 
 // --- Constants ---
 const DEFAULT_MAX_DIMENSION = 1920;
@@ -67,15 +68,17 @@ const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) =
 };
 
 // Function to get file type label AND color classes
-const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: string; controlClassName: string } => {
+const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: string; controlClassName: string; tabTriggerClassName: string } => {
    const subtype = mimeType?.split('/')[1] || 'unknown';
+   // Define base classes for tabs
+   const baseTabTrigger = "data-[state=active]:shadow-sm";
    switch (subtype) {
-      // Define badge colors and corresponding control text/border colors
-      case 'jpeg': return { label: 'JPG', badgeClassName: 'bg-orange-100 text-orange-800 border-orange-200', controlClassName: 'text-orange-700 border-orange-300' };
-      case 'png': return { label: 'PNG', badgeClassName: 'bg-blue-100 text-blue-800 border-blue-200', controlClassName: 'text-blue-700 border-blue-300' };
-      case 'webp': return { label: 'WEBP', badgeClassName: 'bg-green-100 text-green-800 border-green-200', controlClassName: 'text-green-700 border-green-300' }; // Use green for WEBP controls too
-      case 'gif': return { label: 'GIF', badgeClassName: 'bg-purple-100 text-purple-800 border-purple-200', controlClassName: 'text-purple-700 border-purple-300' };
-      default: return { label: subtype.toUpperCase(), badgeClassName: 'bg-gray-100 text-gray-800 border-gray-200', controlClassName: 'text-gray-700 border-gray-300' };
+      // Define badge colors, control text/border colors, and active tab colors
+      case 'jpeg': return { label: 'JPG', badgeClassName: 'bg-orange-100 text-orange-800 border-orange-200', controlClassName: 'text-orange-700 border-orange-300', tabTriggerClassName: cn(baseTabTrigger, 'data-[state=active]:bg-orange-100 data-[state=active]:text-orange-900') };
+      case 'png': return { label: 'PNG', badgeClassName: 'bg-blue-100 text-blue-800 border-blue-200', controlClassName: 'text-blue-700 border-blue-300', tabTriggerClassName: cn(baseTabTrigger, 'data-[state=active]:bg-blue-100 data-[state=active]:text-blue-900') };
+      case 'webp': return { label: 'WEBP', badgeClassName: 'bg-green-100 text-green-800 border-green-200', controlClassName: 'text-green-700 border-green-300', tabTriggerClassName: cn(baseTabTrigger, 'data-[state=active]:bg-green-100 data-[state=active]:text-green-900') };
+      case 'gif': return { label: 'GIF', badgeClassName: 'bg-purple-100 text-purple-800 border-purple-200', controlClassName: 'text-purple-700 border-purple-300', tabTriggerClassName: cn(baseTabTrigger, 'data-[state=active]:bg-purple-100 data-[state=active]:text-purple-900') };
+      default: return { label: subtype.toUpperCase(), badgeClassName: 'bg-gray-100 text-gray-800 border-gray-200', controlClassName: 'text-gray-700 border-gray-300', tabTriggerClassName: cn(baseTabTrigger, 'data-[state=active]:bg-gray-100 data-[state=active]:text-gray-900') };
    }
 };
 
@@ -97,7 +100,7 @@ const Index: React.FC = () => {
   // Refs
   const objectUrlRefs = useRef<Record<string, { original: string | null, compressed: string | null }>>({});
 
-  // --- Core Logic ---
+  // --- Core Logic (Callbacks and Effects remain largely the same) ---
   const updateFileState = (id: string, updates: Partial<ImageFileState>) => {
     setImageFiles(currentFiles =>
       currentFiles.map(file =>
@@ -227,9 +230,9 @@ const Index: React.FC = () => {
   const processingFilesCount = imageFiles.filter(f => f.status === 'compressing' || f.status === 'loading_dims').length;
   const canDownload = completedFiles > 0 && !isProcessing && !isZipping;
 
-  // Get color classes for controls (use JPG for the lossy section, PNG for the PNG section)
-  const lossyControlClasses = getFileTypeInfo('image/jpeg').controlClassName;
-  const pngControlClasses = getFileTypeInfo('image/png').controlClassName;
+  // Get color classes for controls/tabs
+  const lossyFileTypeInfo = getFileTypeInfo('image/jpeg');
+  const pngFileTypeInfo = getFileTypeInfo('image/png');
 
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
@@ -248,32 +251,40 @@ const Index: React.FC = () => {
 
           {/* Settings */}
           {totalFiles > 0 && (
-            <div className="border-t pt-4 space-y-6"> {/* Increased spacing */}
+            <div className="border-t pt-4 space-y-4">
               <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Settings2 className="w-5 h-5" /> 2. Global Settings</h3>
 
-               {/* JPEG/WEBP Settings Section */}
-               <div className={cn("border p-4 rounded-md max-w-xl mx-auto space-y-4", lossyControlClasses)}>
-                  <p className={cn("font-semibold text-center", lossyControlClasses)}>JPEG / WEBP Settings</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                     <div className="space-y-2">
-                        <Label htmlFor="quality-slider" className={cn(lossyControlClasses)}>Quality: {Math.round(jpegQuality * 100)}%</Label>
-                        <Slider id="quality-slider" min={0.05} max={1} step={0.05} value={[jpegQuality]} onValueChange={handleQualityChange} disabled={isProcessing || isZipping} />
-                     </div>
-                     <div className="flex items-center justify-center space-x-2 pt-5 sm:pt-0">
-                        <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isProcessing || isZipping} />
-                        <Label htmlFor="resizing-switch-lossy" className={cn(lossyControlClasses)}>Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
-                     </div>
-                  </div>
-               </div>
+              {/* Tabs Container */}
+              <Tabs defaultValue="lossy" className="w-full max-w-xl mx-auto">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="lossy" className={lossyFileTypeInfo.tabTriggerClassName}>JPEG / WEBP</TabsTrigger>
+                  <TabsTrigger value="png" className={pngFileTypeInfo.tabTriggerClassName}>PNG</TabsTrigger>
+                </TabsList>
 
-               {/* PNG Settings Section */}
-               <div className={cn("border p-4 rounded-md max-w-xl mx-auto space-y-2", pngControlClasses)}>
-                  <p className={cn("font-semibold text-center", pngControlClasses)}>PNG Settings</p>
-                  <Label htmlFor="dimension-slider-png" className={cn("flex items-center gap-1 justify-center", pngControlClasses)}>
-                     <Ruler className="w-4 h-4" /> Max Dimension: {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
-                  </Label>
-                  <Slider id="dimension-slider-png" min={320} max={MAX_SLIDER_DIMENSION} step={10} value={[pngMaxDimension]} onValueChange={handlePngDimensionChange} disabled={isProcessing || isZipping} />
-               </div>
+                {/* Lossy Settings Tab */}
+                <TabsContent value="lossy" className="mt-4 border rounded-md p-4 space-y-4">
+                   {/* <p className={cn("font-semibold text-center text-sm mb-2", lossyFileTypeInfo.controlClassName)}>JPEG / WEBP Settings</p> */}
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                      <div className="space-y-2">
+                         <Label htmlFor="quality-slider" className={cn(lossyFileTypeInfo.controlClassName)}>Quality: {Math.round(jpegQuality * 100)}%</Label>
+                         <Slider id="quality-slider" min={0.05} max={1} step={0.05} value={[jpegQuality]} onValueChange={handleQualityChange} disabled={isProcessing || isZipping} />
+                      </div>
+                      <div className="flex items-center justify-center space-x-2 pt-5 sm:pt-0">
+                         <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isProcessing || isZipping} />
+                         <Label htmlFor="resizing-switch-lossy" className={cn(lossyFileTypeInfo.controlClassName)}>Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
+                      </div>
+                   </div>
+                </TabsContent>
+
+                {/* PNG Settings Tab */}
+                <TabsContent value="png" className="mt-4 border rounded-md p-4 space-y-2">
+                   {/* <p className={cn("font-semibold text-center text-sm mb-2", pngFileTypeInfo.controlClassName)}>PNG Settings</p> */}
+                   <Label htmlFor="dimension-slider-png" className={cn("flex items-center gap-1 justify-center", pngFileTypeInfo.controlClassName)}>
+                      <Ruler className="w-4 h-4" /> Max Dimension: {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
+                   </Label>
+                   <Slider id="dimension-slider-png" min={320} max={MAX_SLIDER_DIMENSION} step={10} value={[pngMaxDimension]} onValueChange={handlePngDimensionChange} disabled={isProcessing || isZipping} />
+                </TabsContent>
+              </Tabs>
             </div>
           )}
 
