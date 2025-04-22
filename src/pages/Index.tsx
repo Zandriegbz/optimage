@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +25,9 @@ const Index: React.FC = () => {
   const [originalDimensions, setOriginalDimensions] = useState<{ width: number; height: number } | null>(null);
   const [compressedDimensions, setCompressedDimensions] = useState<{ width: number; height: number } | null>(null);
 
+  // Refs should be declared at the top level
+  const originalUrlRef = useRef<string | null>(null);
+  const compressedUrlRef = useRef<string | null>(null);
 
   const getImageDimensions = (fileUrl: string): Promise<{ width: number; height: number }> => {
     return new Promise((resolve, reject) => {
@@ -39,11 +42,19 @@ const Index: React.FC = () => {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Revoke previous URLs before creating new ones
+    if (originalUrlRef.current) URL.revokeObjectURL(originalUrlRef.current);
+    if (compressedUrlRef.current) URL.revokeObjectURL(compressedUrlRef.current);
+
     // Reset state for new upload
     setOriginalFile(file);
     const objectUrl = URL.createObjectURL(file);
-    setOriginalImageUrl(objectUrl);
+    setOriginalImageUrl(objectUrl); // Set state immediately
+    originalUrlRef.current = objectUrl; // Update ref immediately
+
     setCompressedImageUrl(null);
+    compressedUrlRef.current = null; // Reset compressed ref
+
     setCompressedFileForDownload(null);
     setError(null);
     setOriginalSize(file.size);
@@ -62,13 +73,13 @@ const Index: React.FC = () => {
 
       const options = {
         maxSizeMB: 1,
-        // maxWidthOrHeight: 1920, // <-- REMOVED this line to preserve dimensions
+        // maxWidthOrHeight: 1920, // Dimension constraint removed
         useWebWorker: true,
         initialQuality: (file.type === 'image/jpeg' || file.type === 'image/webp') ? 0.7 : undefined,
-        // alwaysKeepResolution: true, // This option can sometimes help ensure resolution isn't changed unexpectedly
+        // alwaysKeepResolution: true, // This option can sometimes help
       };
 
-      // Remove undefined keys to avoid passing them to the library
+      // Remove undefined keys
       const activeOptions = Object.entries(options).reduce((acc, [key, value]) => {
         if (value !== undefined) {
           acc[key] = value;
@@ -89,16 +100,17 @@ const Index: React.FC = () => {
 
       setCompressedSize(compressedFile.size);
       setCompressedType(compressedFile.type);
-      setCompressedImageUrl(compressedObjectUrl);
+      setCompressedImageUrl(compressedObjectUrl); // Set state
+      compressedUrlRef.current = compressedObjectUrl; // Update ref
       setCompressedFileForDownload(compressedFile);
 
     } catch (err) {
       console.error('Compression error:', err);
       setError(`Compression failed: ${err instanceof Error ? err.message : String(err)}`);
-      // Clean up potentially created object URLs if compression fails midway
-      if (originalImageUrl) URL.revokeObjectURL(originalImageUrl); // Revoke previous URL if exists
-      URL.revokeObjectURL(objectUrl); // Revoke the newly created one
-      setOriginalImageUrl(null); // Clear preview on error
+      // Clean up the original URL if compression fails
+      if (originalUrlRef.current) URL.revokeObjectURL(originalUrlRef.current);
+      setOriginalImageUrl(null);
+      originalUrlRef.current = null;
       setOriginalFile(null);
       setOriginalSize(null);
       setOriginalType(null);
@@ -106,7 +118,7 @@ const Index: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [originalImageUrl]); // Dependency added
+  }, []); // Removed dependencies as refs handle the URL cleanup logic now
 
   const handleDownload = () => {
     if (compressedFileForDownload) {
@@ -115,18 +127,20 @@ const Index: React.FC = () => {
   };
 
   // Clean up object URLs on component unmount
-  React.useEffect(() => {
-    // Store URLs in refs to access the correct ones in the cleanup function
-    const originalUrlRef = React.useRef(originalImageUrl);
-    const compressedUrlRef = React.useRef(compressedImageUrl);
-    originalUrlRef.current = originalImageUrl;
-    compressedUrlRef.current = compressedImageUrl;
-
+  useEffect(() => {
+    // The refs contain the latest URLs that need cleanup.
+    // This cleanup runs only once when the component unmounts.
     return () => {
-      if (originalUrlRef.current) URL.revokeObjectURL(originalUrlRef.current);
-      if (compressedUrlRef.current) URL.revokeObjectURL(compressedUrlRef.current);
+      if (originalUrlRef.current) {
+        console.log("Unmounting: Revoking original URL", originalUrlRef.current);
+        URL.revokeObjectURL(originalUrlRef.current);
+      }
+      if (compressedUrlRef.current) {
+        console.log("Unmounting: Revoking compressed URL", compressedUrlRef.current);
+        URL.revokeObjectURL(compressedUrlRef.current);
+      }
     };
-  }, [originalImageUrl, compressedImageUrl]);
+  }, []); // Empty dependency array ensures this runs only on mount and unmount
 
   const formatBytes = (bytes: number | null, decimals = 2) => {
     if (bytes === null || bytes === 0) return '0 Bytes';
@@ -141,38 +155,39 @@ const Index: React.FC = () => {
 
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
-      <Card className="w-full max-w-3xl"> {/* Increased max-width slightly */}
+      <Card className="w-full max-w-3xl">
         <CardHeader>
           <CardTitle>Image Optimizer</CardTitle>
           <CardDescription>Upload an image (JPG, PNG, WEBP) to compress it without changing dimensions.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid w-full max-w-sm items-center gap-1.5 mx-auto"> {/* Centered upload */}
+          <div className="grid w-full max-w-sm items-center gap-1.5 mx-auto">
             <Label htmlFor="picture">Upload Image</Label>
             <Input id="picture" type="file" accept="image/jpeg, image/png, image/webp" onChange={handleImageUpload} disabled={loading} />
           </div>
 
           {loading && (
-            <div className="flex items-center justify-center space-x-2 pt-4"> {/* Centered loader */}
+            <div className="flex items-center justify-center space-x-2 pt-4">
               <Progress value={undefined} className="w-1/2 h-2 animate-pulse" />
               <span>Compressing...</span>
             </div>
           )}
 
           {error && (
-            <Alert variant="destructive" className="max-w-xl mx-auto"> {/* Centered error */}
+            <Alert variant="destructive" className="max-w-xl mx-auto">
               <FileWarning className="h-4 w-4" />
               <AlertTitle>Error</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
 
+          {/* Use state for rendering, refs for cleanup */}
           {(originalImageUrl || compressedImageUrl) && !error && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start pt-4"> {/* Increased gap */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start pt-4">
               {originalImageUrl && (
                 <div className="space-y-2">
                   <h3 className="font-semibold text-center">Original</h3>
-                  <img src={originalImageUrl} alt="Original" className="rounded-md border max-w-full h-auto mx-auto" style={{ maxHeight: '350px' }} /> {/* Slightly larger max height */}
+                  <img src={originalImageUrl} alt="Original" className="rounded-md border max-w-full h-auto mx-auto" style={{ maxHeight: '350px' }} />
                   <p className="text-sm text-center text-muted-foreground">
                     Size: {formatBytes(originalSize)} <br />
                     Type: {originalType} <br />
@@ -183,7 +198,7 @@ const Index: React.FC = () => {
               {compressedImageUrl && (
                 <div className="space-y-2">
                   <h3 className="font-semibold text-center">Compressed</h3>
-                  <img src={compressedImageUrl} alt="Compressed" className="rounded-md border max-w-full h-auto mx-auto" style={{ maxHeight: '350px' }} /> {/* Slightly larger max height */}
+                  <img src={compressedImageUrl} alt="Compressed" className="rounded-md border max-w-full h-auto mx-auto" style={{ maxHeight: '350px' }} />
                    <p className="text-sm text-center text-muted-foreground">
                     Size: {formatBytes(compressedSize)} <br />
                     Type: {compressedType} <br />
@@ -196,7 +211,7 @@ const Index: React.FC = () => {
             </div>
           )}
         </CardContent>
-        <CardFooter className="flex justify-center pt-4"> {/* Added padding top */}
+        <CardFooter className="flex justify-center pt-4">
           {compressedFileForDownload && !loading && !error && (
             <Button onClick={handleDownload}>
               <Download className="mr-2 h-4 w-4" /> Download Compressed Image
@@ -205,7 +220,7 @@ const Index: React.FC = () => {
         </CardFooter>
       </Card>
 
-      <Alert className="max-w-3xl"> {/* Increased max-width */}
+      <Alert className="max-w-3xl">
         <Terminal className="h-4 w-4" />
         <AlertTitle>How it works</AlertTitle>
         <AlertDescription>
