@@ -13,6 +13,7 @@ import { saveAs } from 'file-saver';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import JSZip from 'jszip'; // Import JSZip
+import { Badge } from "@/components/ui/badge"; // Import Badge
 
 // --- Constants ---
 const DEFAULT_MAX_DIMENSION = 1920;
@@ -62,6 +63,19 @@ const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) =
       timeoutId = setTimeout(() => resolve(func(...args)), waitFor);
     });
   };
+};
+
+// Function to get file extension/type label
+const getFileTypeLabel = (mimeType: string): string => {
+   if (!mimeType) return '???';
+   const subtype = mimeType.split('/')[1];
+   switch (subtype) {
+      case 'jpeg': return 'JPG';
+      case 'png': return 'PNG';
+      case 'webp': return 'WEBP';
+      case 'gif': return 'GIF';
+      default: return subtype?.toUpperCase() || '???';
+   }
 };
 
 
@@ -195,8 +209,6 @@ const Index: React.FC = () => {
 
   // Debounced version for settings changes
   const debouncedProcessAllFiles = useCallback(debounce(() => {
-      // Reprocess files that are not in error state or already done with current settings?
-      // For simplicity, let's reprocess all applicable files.
       const applicableFiles = imageFiles.filter(f => f.status !== 'error');
       if (applicableFiles.length > 0) {
           console.log("Settings changed, reprocessing applicable files...");
@@ -213,10 +225,15 @@ const Index: React.FC = () => {
     const newImageFiles: ImageFileState[] = [];
 
     Array.from(files).forEach(file => {
-      const id = `${file.name}-${file.lastModified}-${Math.random()}`; // Simple unique enough ID
+      // Basic check for image type before creating object URL
+      if (!file.type.startsWith('image/')) {
+         console.warn(`Skipping non-image file: ${file.name} (${file.type})`);
+         return; // Skip non-image files
+      }
+
+      const id = `${file.name}-${file.lastModified}-${Math.random()}`;
       const originalImageUrl = URL.createObjectURL(file);
 
-      // Store URL for cleanup
       objectUrlRefs.current[id] = { original: originalImageUrl, compressed: null };
 
       newImageFiles.push({
@@ -225,28 +242,28 @@ const Index: React.FC = () => {
         originalImageUrl,
         originalSize: file.size,
         originalType: file.type,
-        originalDimensions: null, // Load later
+        originalDimensions: null,
         compressedFile: null,
         compressedImageUrl: null,
         compressedSize: null,
         compressedType: null,
         compressedDimensions: null,
-        status: 'pending', // Start as pending
+        status: 'pending',
         error: null,
       });
     });
 
-    // Add new files to state
-    // Consider replacing vs appending? Let's append for now.
+    if (newImageFiles.length === 0) {
+       // Handle case where only non-image files were selected
+       event.target.value = ''; // Clear input
+       return;
+    }
+
     setImageFiles(current => [...current, ...newImageFiles]);
-
-    // Trigger processing for the newly added files
     await processFiles(newImageFiles);
+    event.target.value = '';
 
-    // Clear the input value to allow re-uploading the same file(s)
-     event.target.value = '';
-
-  }, [processFiles]); // Depends on processFiles
+  }, [processFiles]);
 
   // Handlers for controls - trigger reprocessing
   const handleQualityChange = (value: number[]) => {
@@ -256,7 +273,6 @@ const Index: React.FC = () => {
 
   const handleResizingChangeLossy = (checked: boolean) => {
     setEnableResizingLossy(checked);
-    // Immediate reprocessing for switch toggle
     const applicableFiles = imageFiles.filter(f => f.status !== 'error' && (f.originalType === 'image/jpeg' || f.originalType === 'image/webp'));
      if (applicableFiles.length > 0) {
          console.log("Lossy resize setting changed, reprocessing...");
@@ -282,7 +298,6 @@ const Index: React.FC = () => {
     const zip = new JSZip();
 
     filesToZip.forEach((fileState) => {
-      // Use original filename for the file inside the zip
       zip.file(fileState.originalFile.name, fileState.compressedFile!);
     });
 
@@ -291,13 +306,12 @@ const Index: React.FC = () => {
         { type: "blob", streamFiles: true },
         (metadata) => {
           setZipProgress(metadata.percent);
-          console.log("Zipping progress:", metadata.percent.toFixed(2) + " %");
         }
       );
       saveAs(zipBlob, "compressed_images.zip");
     } catch (err) {
       console.error("Error generating ZIP:", err);
-      setError("Failed to create ZIP file."); // Show error to user
+      setError("Failed to create ZIP file.");
     } finally {
       setIsZipping(false);
       setZipProgress(0);
@@ -312,20 +326,18 @@ const Index: React.FC = () => {
         if (original) URL.revokeObjectURL(original);
         if (compressed) URL.revokeObjectURL(compressed);
       });
-      objectUrlRefs.current = {}; // Clear refs
+      objectUrlRefs.current = {};
     };
   }, []);
 
   // Function to remove a specific image file
   const removeImageFile = (id: string) => {
-      // Revoke URLs first
       const urls = objectUrlRefs.current[id];
       if (urls) {
           if (urls.original) URL.revokeObjectURL(urls.original);
           if (urls.compressed) URL.revokeObjectURL(urls.compressed);
-          delete objectUrlRefs.current[id]; // Remove from refs
+          delete objectUrlRefs.current[id];
       }
-      // Remove from state
       setImageFiles(current => current.filter(file => file.id !== id));
   };
 
@@ -338,21 +350,21 @@ const Index: React.FC = () => {
 
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
-      <Card className="w-full max-w-4xl"> {/* Wider card */}
+      <Card className="w-full max-w-4xl">
         <CardHeader>
           <CardTitle>Bulk Image Optimizer</CardTitle>
           <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download as ZIP.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* --- File Input --- */}
-          <div className="grid w-full max-w-md items-center gap-1.5 mx-auto"> {/* Wider input area */}
+          <div className="grid w-full max-w-md items-center gap-1.5 mx-auto">
             <Label htmlFor="picture" className="text-center">1. Upload Images</Label>
             <Input
               id="picture"
               type="file"
-              accept="image/jpeg, image/png, image/webp"
+              accept="image/jpeg, image/png, image/webp" // Accept common image types
               onChange={handleImageUpload}
-              multiple // Allow multiple files
+              multiple
               disabled={isProcessing || isZipping}
               className="h-12 text-center cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90"
             />
@@ -363,8 +375,6 @@ const Index: React.FC = () => {
           {totalFiles > 0 && (
             <div className="border-t pt-4 space-y-4">
               <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Settings2 className="w-5 h-5" /> 2. Global Optimization Settings</h3>
-              {/* Controls remain the same, affecting all applicable files */}
-              {/* JPEG/WEBP Controls */}
                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl mx-auto">
                   <div className="space-y-2">
                      <Label htmlFor="quality-slider">JPEG/WEBP Quality: {Math.round(jpegQuality * 100)}%</Label>
@@ -375,7 +385,6 @@ const Index: React.FC = () => {
                      <Label htmlFor="resizing-switch-lossy">Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
                   </div>
                </div>
-               {/* PNG Controls */}
                <div className="space-y-2 max-w-md mx-auto">
                   <Label htmlFor="dimension-slider-png" className="flex items-center gap-1 justify-center">
                      <Ruler className="w-4 h-4" /> Max Dimension (PNG): {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
@@ -420,15 +429,23 @@ const Index: React.FC = () => {
                         </Button>
                         <CardContent className="p-3 space-y-2">
                            <div className="flex justify-center items-center h-32 bg-muted rounded-md overflow-hidden">
-                              {/* Show compressed preview if available, else original */}
                               <img
                                  src={file.compressedImageUrl ?? file.originalImageUrl}
                                  alt={file.originalFile.name}
                                  className="max-h-full max-w-full object-contain"
                               />
                            </div>
-                           <p className="text-xs font-medium truncate" title={file.originalFile.name}>{file.originalFile.name}</p>
-                           <div className="text-xs text-muted-foreground flex justify-between">
+                           {/* File Name and Type Badge */}
+                           <div className="flex items-center justify-between gap-2">
+                              <p className="text-xs font-medium truncate flex-1" title={file.originalFile.name}>
+                                 {file.originalFile.name}
+                              </p>
+                              <Badge variant="secondary" className="text-xs px-1.5 py-0.5">
+                                 {getFileTypeLabel(file.originalType)}
+                              </Badge>
+                           </div>
+                           {/* Size and Status */}
+                           <div className="text-xs text-muted-foreground flex justify-between items-center">
                               <span>{formatBytes(file.originalSize)}</span>
                               {file.status === 'done' && file.compressedSize !== null && (
                                  <span className="text-green-600 font-semibold">{formatBytes(file.compressedSize)}</span>
@@ -443,8 +460,6 @@ const Index: React.FC = () => {
                                  <span className="text-gray-500">Pending</span>
                               )}
                            </div>
-                           {/* Optional: Show dimensions */}
-                           {/* <p className="text-xs text-muted-foreground">{file.originalDimensions ? `${file.originalDimensions.width}x${file.originalDimensions.height}` : '...'}</p> */}
                            {file.status === 'error' && file.error && (
                               <p className="text-xs text-red-600 truncate" title={file.error}>{file.error}</p>
                            )}
@@ -468,7 +483,6 @@ const Index: React.FC = () => {
         </CardFooter>
       </Card>
 
-      {/* How it works Alert remains the same */}
        <Alert className="max-w-3xl">
         <Terminal className="h-4 w-4" />
         <AlertTitle>How it works</AlertTitle>
