@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, DragEvent } from 'react';
+import React, { useState, useRef, useCallback, DragEvent, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,7 +7,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "sonner";
 import { Upload, Download, ArrowRight, Loader2, FileImage, X, CheckCircle, AlertCircle, Archive, Info } from 'lucide-react';
 import JSZip from 'jszip';
-import { saveAs } from 'file-saver'; // file-saver is often used with jszip
+import { saveAs } from 'file-saver';
+
+// Import Squoosh functions - dynamic import might be better for bundle size later
+import { ImagePool } from '@squoosh/lib';
+import os from 'os'; // Required by @squoosh/lib
 
 // Helper function to format bytes
 const formatBytes = (bytes: number, decimals = 2): string => {
@@ -24,18 +28,51 @@ interface ImageFileState {
     originalSize: number;
     optimizedBlob?: Blob;
     optimizedSize?: number;
-    optimizedDataUrl?: string;
-    status: 'pending' | 'optimizing' | 'done' | 'error' | 'no_reduction'; // Added 'no_reduction' status
+    optimizedDataUrl?: string; // Keep for JPEG preview, maybe PNG too if needed
+    status: 'pending' | 'optimizing' | 'done' | 'error' | 'no_reduction';
     error?: string;
 }
+
+// Create an ImagePool outside the component to manage concurrency
+// Use half the available CPU cores, or at least 1
+const threadCount = Math.max(1, Math.floor((os.cpus()?.length || 1) / 2));
+let imagePool: ImagePool | null = null; // Initialize lazily
 
 const Index: React.FC = () => {
     const [imageFiles, setImageFiles] = useState<Record<string, ImageFileState>>({});
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
+    const [isInitializing, setIsInitializing] = useState<boolean>(true); // Track pool initialization
     const [isDragging, setIsDragging] = useState<boolean>(false);
     const [quality] = useState<number>(0.7); // JPEG quality (0 to 1)
 
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Initialize ImagePool on mount
+    useEffect(() => {
+        console.log(`Initializing ImagePool with ${threadCount} threads...`);
+        try {
+            imagePool = new ImagePool(threadCount);
+            console.log("ImagePool initialized successfully.");
+            setIsInitializing(false);
+        } catch (error) {
+            console.error("Failed to initialize ImagePool:", error);
+            toast.error("Failed to initialize image processing library. Please refresh.", { duration: Infinity });
+            setIsInitializing(false); // Allow UI interaction even if pool fails
+        }
+
+        // Cleanup function to close the pool on unmount
+        return () => {
+            if (imagePool) {
+                console.log("Closing ImagePool...");
+                imagePool.close().then(() => {
+                    console.log("ImagePool closed.");
+                    imagePool = null;
+                }).catch(err => {
+                    console.error("Error closing ImagePool:", err);
+                });
+            }
+        };
+    }, []); // Run only once on mount
 
     const addFiles = (files: FileList | null) => {
         if (!files) return;
@@ -47,9 +84,8 @@ const Index: React.FC = () => {
         for (const file of Array.from(files)) {
             if (!['image/jpeg', 'image/png'].includes(file.type)) {
                 invalidCount++;
-                continue; // Skip invalid file types
+                continue;
             }
-            // Avoid duplicates by checking name - simple check
             if (!imageFiles[file.name]) {
                  newFiles[file.name] = {
                     file: file,
@@ -71,159 +107,154 @@ const Index: React.FC = () => {
 
     const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         addFiles(event.target.files);
-        // Reset input value to allow selecting the same file(s) again
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
     };
 
     const handleDragOver = (event: DragEvent<HTMLDivElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(true);
+        event.preventDefault(); event.stopPropagation(); setIsDragging(true);
     };
-
     const handleDragLeave = (event: DragEvent<HTMLDivElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(false);
+        event.preventDefault(); event.stopPropagation(); setIsDragging(false);
     };
-
     const handleDrop = (event: DragEvent<HTMLDivElement>) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setIsDragging(false);
+        event.preventDefault(); event.stopPropagation(); setIsDragging(false);
         addFiles(event.dataTransfer.files);
     };
 
-    const optimizeSingleImage = (fileName: string): Promise<void> => {
-        return new Promise((resolve, reject) => {
-            const fileState = imageFiles[fileName];
-            if (!fileState || !['pending', 'error', 'no_reduction'].includes(fileState.status)) { // Allow re-optimizing errors/no_reduction
-                resolve();
-                return;
-            }
-
-            setImageFiles(prev => ({
-                ...prev,
-                [fileName]: { ...prev[fileName], status: 'optimizing', error: undefined } // Reset error on retry
-            }));
-            console.log("Starting optimization for:", fileName);
-
-            const reader = new FileReader();
-            reader.onload = (event) => {
-                const img = new Image();
-                img.onload = () => {
-                    console.log("Image loaded into memory:", fileName);
-                    const canvas = document.createElement('canvas');
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    const ctx = canvas.getContext('2d');
-                    if (!ctx) {
-                        console.error("Could not get canvas context for:", fileName);
-                        setImageFiles(prev => ({
-                            ...prev,
-                            [fileName]: { ...prev[fileName], status: 'error', error: 'Canvas context error' }
-                        }));
-                        reject(new Error('Canvas context error'));
-                        return;
-                    }
-                    ctx.drawImage(img, 0, 0, img.width, img.height);
-                    console.log("Image drawn on canvas:", fileName);
-
-                    const mimeType = fileState.file.type === 'image/png' ? 'image/png' : 'image/jpeg';
-                    const qualityArg = mimeType === 'image/jpeg' ? quality : undefined;
-
-                    canvas.toBlob((blob) => {
-                        if (blob) {
-                            console.log("Generated blob:", fileName, blob.size);
-
-                            // *** PNG Size Check ***
-                            if (mimeType === 'image/png' && blob.size >= fileState.originalSize) {
-                                console.log("PNG optimization did not reduce size for:", fileName);
-                                setImageFiles(prev => ({
-                                    ...prev,
-                                    [fileName]: {
-                                        ...prev[fileName],
-                                        status: 'no_reduction', // Set specific status
-                                        optimizedBlob: undefined, // Don't store the larger blob
-                                        optimizedSize: undefined,
-                                        optimizedDataUrl: undefined, // No preview needed if not reduced
-                                        error: 'File size did not decrease',
-                                    }
-                                }));
-                                resolve(); // Resolve successfully, but indicate no reduction
-                                return;
-                            }
-                            // *** End PNG Size Check ***
+    const optimizeSingleImage = async (fileName: string): Promise<void> => {
+        const fileState = imageFiles[fileName];
+        if (!fileState || !['pending', 'error', 'no_reduction'].includes(fileState.status)) {
+            return; // Already processed or currently optimizing
+        }
+        if (!imagePool && fileState.file.type === 'image/png') {
+             setImageFiles(prev => ({ ...prev, [fileName]: { ...prev[fileName], status: 'error', error: 'Processing library not ready' } }));
+             console.error("ImagePool not available for PNG processing");
+             toast.error("Image processing library failed to load. Cannot process PNGs.", { duration: 10000 });
+             return;
+        }
 
 
-                            console.log("Optimized blob created:", fileName, blob.size);
-                            const dataUrlReader = new FileReader();
-                            dataUrlReader.onloadend = () => {
-                                setImageFiles(prev => ({
-                                    ...prev,
-                                    [fileName]: {
-                                        ...prev[fileName],
-                                        optimizedBlob: blob,
-                                        optimizedSize: blob.size,
-                                        optimizedDataUrl: dataUrlReader.result as string,
-                                        status: 'done',
-                                        error: undefined,
-                                    }
-                                }));
-                                resolve();
-                            }
-                            dataUrlReader.onerror = () => {
-                                console.error("Error reading blob as data URL for:", fileName);
-                                // Still mark as done, but without preview
-                                setImageFiles(prev => ({
-                                    ...prev,
-                                    [fileName]: {
-                                        ...prev[fileName],
-                                        optimizedBlob: blob,
-                                        optimizedSize: blob.size,
-                                        status: 'done',
-                                        error: 'Preview generation failed',
-                                    }
-                                }));
-                                resolve(); // Resolve even if preview fails
-                            }
-                            dataUrlReader.readAsDataURL(blob);
-                        } else {
-                            console.error("Canvas toBlob returned null for:", fileName);
-                            setImageFiles(prev => ({
-                                ...prev,
-                                [fileName]: { ...prev[fileName], status: 'error', error: 'Blob creation failed' }
-                            }));
-                            reject(new Error('Blob creation failed'));
-                        }
-                    }, mimeType, qualityArg);
-                };
-                img.onerror = () => {
-                    console.error("Image load error for:", fileName);
+        setImageFiles(prev => ({
+            ...prev,
+            [fileName]: { ...prev[fileName], status: 'optimizing', error: undefined }
+        }));
+        console.log(`Starting optimization for: ${fileName} (${fileState.file.type})`);
+
+        try {
+            const fileBuffer = await fileState.file.arrayBuffer();
+            let optimizedBlob: Blob | null = null;
+            let optimizedSize: number | undefined = undefined;
+
+            if (fileState.file.type === 'image/png' && imagePool) {
+                // --- PNG Optimization using Squoosh (OxiPNG) ---
+                console.log(`Processing PNG with Squoosh/OxiPNG: ${fileName}`);
+                const image = imagePool.ingestImage(fileBuffer);
+
+                // Decode (needed for Squoosh processing)
+                await image.decoded; // Wait for decoding
+
+                // Encode with OxiPNG (lossless)
+                // You can adjust the 'level' (0-6, higher is slower but potentially smaller)
+                const encodeOptions = { oxipng: { level: 2 } };
+                await image.encode(encodeOptions);
+
+                const encodedResult = await image.encodedWith.oxipng; // Get the result for oxipng
+                if (!encodedResult) {
+                    throw new Error('OxiPNG encoding failed');
+                }
+
+                console.log(`Squoosh/OxiPNG finished for: ${fileName}, size: ${encodedResult.size}`);
+
+                if (encodedResult.size < fileState.originalSize) {
+                    optimizedBlob = new Blob([encodedResult.binary], { type: 'image/png' });
+                    optimizedSize = optimizedBlob.size;
+                } else {
+                    console.log(`Squoosh/OxiPNG did not reduce size for: ${fileName}`);
                     setImageFiles(prev => ({
                         ...prev,
-                        [fileName]: { ...prev[fileName], status: 'error', error: 'Image load failed' }
+                        [fileName]: { ...prev[fileName], status: 'no_reduction', error: 'File size did not decrease' }
                     }));
-                    reject(new Error('Image load failed'));
+                    return; // Exit early if no reduction
                 }
-                img.src = event.target?.result as string;
-            };
-            reader.onerror = () => {
-                console.error("FileReader error for:", fileName);
-                setImageFiles(prev => ({
-                    ...prev,
-                    [fileName]: { ...prev[fileName], status: 'error', error: 'File read failed' }
-                }));
-                reject(new Error('File read failed'));
+
+            } else if (fileState.file.type === 'image/jpeg') {
+                // --- JPEG Optimization using Canvas (as before) ---
+                console.log(`Processing JPEG with Canvas: ${fileName}`);
+                optimizedBlob = await new Promise<Blob | null>((resolve, reject) => {
+                     const img = new Image();
+                     img.onload = () => {
+                         const canvas = document.createElement('canvas');
+                         canvas.width = img.width;
+                         canvas.height = img.height;
+                         const ctx = canvas.getContext('2d');
+                         if (!ctx) return reject(new Error('Canvas context error'));
+                         ctx.drawImage(img, 0, 0, img.width, img.height);
+                         canvas.toBlob(resolve, 'image/jpeg', quality);
+                     };
+                     img.onerror = () => reject(new Error('Image load failed'));
+                     img.src = URL.createObjectURL(new Blob([fileBuffer])); // Create URL from buffer
+                 });
+
+                if (!optimizedBlob) {
+                    throw new Error('JPEG blob creation failed');
+                }
+                 optimizedSize = optimizedBlob.size;
+                 console.log(`Canvas/JPEG finished for: ${fileName}, size: ${optimizedSize}`);
+
+                 // Optional: Check if JPEG size increased (less likely but possible)
+                 if (optimizedSize >= fileState.originalSize) {
+                     console.log(`Canvas/JPEG did not reduce size for: ${fileName}`);
+                     setImageFiles(prev => ({
+                         ...prev,
+                         [fileName]: { ...prev[fileName], status: 'no_reduction', error: 'File size did not decrease' }
+                     }));
+                     return;
+                 }
+
+            } else {
+                 throw new Error(`Unsupported type or missing image pool: ${fileState.file.type}`);
             }
-            reader.readAsDataURL(fileState.file);
-        });
+
+            // --- Update state with successful optimization ---
+            if (optimizedBlob && optimizedSize !== undefined) {
+                 // Generate Data URL for preview (optional but nice)
+                 const dataUrl = await new Promise<string>((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result as string);
+                    reader.onerror = reject;
+                    reader.readAsDataURL(optimizedBlob!);
+                 });
+
+                 setImageFiles(prev => ({
+                    ...prev,
+                    [fileName]: {
+                        ...prev[fileName],
+                        optimizedBlob: optimizedBlob,
+                        optimizedSize: optimizedSize,
+                        optimizedDataUrl: dataUrl,
+                        status: 'done',
+                        error: undefined,
+                    }
+                }));
+            }
+
+        } catch (error: any) {
+            console.error(`Optimization failed for ${fileName}:`, error);
+            setImageFiles(prev => ({
+                ...prev,
+                [fileName]: { ...prev[fileName], status: 'error', error: error.message || 'Optimization failed' }
+            }));
+        }
     };
 
+
     const optimizeAllImages = async () => {
-        // Include pending, error, and no_reduction states for potential re-optimization
+        if (isInitializing) {
+            toast.warning("Processing library still initializing...");
+            return;
+        }
         const filesToProcess = Object.keys(imageFiles).filter(name => ['pending', 'error', 'no_reduction'].includes(imageFiles[name].status));
         if (filesToProcess.length === 0) {
             toast.info("No images requiring optimization.");
@@ -233,10 +264,14 @@ const Index: React.FC = () => {
         setIsProcessing(true);
         toast.info(`Optimizing ${filesToProcess.length} image(s)...`);
 
+        // Process files sequentially or in limited batches if ImagePool handles concurrency internally
+        // Using Promise.all might overwhelm the pool if it doesn't manage its queue well.
+        // Let's try Promise.all first, assuming ImagePool handles it.
         const optimizationPromises = filesToProcess.map(fileName =>
             optimizeSingleImage(fileName).catch(error => {
-                console.warn(`Optimization failed for ${fileName}:`, error.message);
-                return Promise.resolve();
+                console.warn(`Optimization promise rejected for ${fileName}:`, error?.message);
+                // Error is already set in state within optimizeSingleImage
+                return Promise.resolve(); // Ensure Promise.all continues
             })
         );
 
@@ -244,7 +279,7 @@ const Index: React.FC = () => {
             await Promise.all(optimizationPromises);
             toast.success("Optimization process completed.");
         } catch (error) {
-            console.error("Error during batch optimization:", error);
+            console.error("Error during batch optimization (Promise.all):", error);
             toast.error("An error occurred during batch optimization.");
         } finally {
             setIsProcessing(false);
@@ -253,7 +288,6 @@ const Index: React.FC = () => {
 
      const handleDownloadAll = async () => {
         const optimizedEntries = Object.entries(imageFiles).filter(
-            // Only include 'done' status for download
             ([, state]) => state.status === 'done' && state.optimizedBlob
         );
 
@@ -265,16 +299,16 @@ const Index: React.FC = () => {
         const zip = new JSZip();
         optimizedEntries.forEach(([fileName, state]) => {
             const nameParts = fileName.split('.');
-            const extension = nameParts.pop();
-            const baseName = nameParts.join('.');
-            const optimizedFileName = `${baseName}-optimized.${state.optimizedBlob!.type === 'image/png' ? 'png' : 'jpg'}`;
+            const extension = state.optimizedBlob!.type === 'image/png' ? 'png' : 'jpg';
+            const baseName = nameParts.slice(0, -1).join('.');
+            const optimizedFileName = `${baseName}-optimized.${extension}`;
             zip.file(optimizedFileName, state.optimizedBlob!);
         });
 
         try {
             toast.info("Generating zip file...");
             const zipBlob = await zip.generateAsync({ type: "blob" });
-            saveAs(zipBlob, "optimized_images.zip"); // Using file-saver
+            saveAs(zipBlob, "optimized_images.zip");
             toast.success("Zip file download started.");
         } catch (error) {
             console.error("Error generating zip file:", error);
@@ -299,9 +333,7 @@ const Index: React.FC = () => {
         toast.info("Cleared all images.");
     };
 
-    // Count files needing processing (pending, error, no_reduction)
     const filesToProcessCount = Object.values(imageFiles).filter(f => ['pending', 'error', 'no_reduction'].includes(f.status)).length;
-    // Count files successfully optimized and ready for download
     const optimizedFilesCount = Object.values(imageFiles).filter(f => f.status === 'done' && f.optimizedBlob).length;
 
     return (
@@ -310,18 +342,24 @@ const Index: React.FC = () => {
                 <CardHeader>
                     <CardTitle className="text-2xl font-bold text-center">Bulk Image Size Reducer</CardTitle>
                     <CardDescription className="text-center">
-                        Upload or drag & drop JPEG/PNG images to reduce file size.
+                        Upload or drag & drop JPEG/PNG images. Uses OxiPNG for better PNG compression.
                     </CardDescription>
+                     {isInitializing && (
+                        <div className="text-center text-sm text-muted-foreground flex items-center justify-center gap-2 pt-2">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Initializing processing library...
+                        </div>
+                    )}
                 </CardHeader>
                 <CardContent className="space-y-6">
                     <div
-                        className={`grid w-full items-center gap-1.5 border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${isDragging ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}`}
-                        onDragOver={handleDragOver}
-                        onDragLeave={handleDragLeave}
-                        onDrop={handleDrop}
-                        onClick={() => fileInputRef.current?.click()} // Trigger file input click
+                        className={`grid w-full items-center gap-1.5 border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${isDragging ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'} ${isInitializing ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        onDragOver={isInitializing ? undefined : handleDragOver}
+                        onDragLeave={isInitializing ? undefined : handleDragLeave}
+                        onDrop={isInitializing ? undefined : handleDrop}
+                        onClick={() => !isInitializing && fileInputRef.current?.click()}
                     >
-                        <Label htmlFor="picture" className="cursor-pointer">
+                        <Label htmlFor="picture" className={isInitializing ? 'cursor-not-allowed' : 'cursor-pointer'}>
                             <Upload className="mx-auto h-12 w-12 text-muted-foreground mb-2" />
                             <span className="font-semibold">Click to upload or drag & drop</span>
                             <p className="text-xs text-muted-foreground">JPEG or PNG files</p>
@@ -332,33 +370,27 @@ const Index: React.FC = () => {
                             accept="image/jpeg, image/png"
                             onChange={handleFileChange}
                             ref={fileInputRef}
-                            multiple // Allow multiple file selection
-                            className="sr-only" // Hide the default input visually
+                            multiple
+                            className="sr-only"
+                            disabled={isInitializing}
                         />
                     </div>
 
                     {Object.keys(imageFiles).length > 0 && (
                         <div className="space-y-4">
                              <div className="flex justify-between items-center gap-2 flex-wrap">
-                                <Button onClick={optimizeAllImages} disabled={isProcessing || filesToProcessCount === 0}>
+                                <Button onClick={optimizeAllImages} disabled={isProcessing || filesToProcessCount === 0 || isInitializing}>
                                     {isProcessing ? (
-                                        <>
-                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                            Optimizing...
-                                        </>
+                                        <> <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Optimizing... </>
                                     ) : (
-                                        <>
-                                            <ArrowRight className="mr-2 h-4 w-4" />
-                                            Optimize {filesToProcessCount > 0 ? `${filesToProcessCount} Pending/Retry` : 'Images'}
-                                        </>
+                                        <> <ArrowRight className="mr-2 h-4 w-4" /> Optimize {filesToProcessCount > 0 ? `${filesToProcessCount} Pending/Retry` : 'Images'} </>
                                     )}
                                 </Button>
                                 <div className="flex gap-2">
-                                    <Button onClick={handleDownloadAll} disabled={isProcessing || optimizedFilesCount === 0} variant="secondary">
-                                        <Archive className="mr-2 h-4 w-4" />
-                                        Download All ({optimizedFilesCount})
+                                    <Button onClick={handleDownloadAll} disabled={isProcessing || optimizedFilesCount === 0 || isInitializing} variant="secondary">
+                                        <Archive className="mr-2 h-4 w-4" /> Download All ({optimizedFilesCount})
                                     </Button>
-                                    <Button onClick={clearAll} variant="outline" size="icon" title="Clear All">
+                                    <Button onClick={clearAll} variant="outline" size="icon" title="Clear All" disabled={isInitializing || isProcessing}>
                                         <X className="h-4 w-4" />
                                     </Button>
                                 </div>
@@ -400,7 +432,7 @@ const Index: React.FC = () => {
                                                             </>
                                                         )}
                                                          {state.status === 'no_reduction' && <span className="text-orange-500 ml-2">(No reduction)</span>}
-                                                         {state.status === 'error' && <span className="text-red-600 ml-2">Error</span>}
+                                                         {state.status === 'error' && <span className="text-red-600 ml-2" title={state.error}>Error</span>}
                                                     </span>
                                                 </div>
                                             </div>
