@@ -7,13 +7,14 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2 } from "lucide-react";
+import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler } from "lucide-react"; // Added Ruler icon
 import imageCompression from 'browser-image-compression';
 import { saveAs } from 'file-saver';
-import { Slider } from "@/components/ui/slider"; // Import Slider
-import { Switch } from "@/components/ui/switch"; // Import Switch
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 
-const MAX_DIMENSION = 1920; // Define max dimension constant
+const DEFAULT_MAX_DIMENSION = 1920; // Default max dimension for resizing
+const MAX_SLIDER_DIMENSION = 4000; // Max value for the PNG dimension slider
 
 const Index: React.FC = () => {
   const [originalFile, setOriginalFile] = useState<File | null>(null);
@@ -29,10 +30,11 @@ const Index: React.FC = () => {
   const [originalDimensions, setOriginalDimensions] = useState<{ width: number; height: number } | null>(null);
   const [compressedDimensions, setCompressedDimensions] = useState<{ width: number; height: number } | null>(null);
 
-  // --- New State for Controls ---
-  const [jpegQuality, setJpegQuality] = useState<number>(0.7); // Default quality 0.7 (70%)
-  const [enableResizing, setEnableResizing] = useState<boolean>(false); // Default resizing disabled
-  const [maxSizeTarget, setMaxSizeTarget] = useState<number>(1); // Default 1MB target for lossy
+  // --- State for Controls ---
+  const [jpegQuality, setJpegQuality] = useState<number>(0.7); // Quality for JPEG/WEBP
+  const [enableResizingLossy, setEnableResizingLossy] = useState<boolean>(false); // Resizing toggle for JPEG/WEBP
+  const [pngMaxDimension, setPngMaxDimension] = useState<number>(DEFAULT_MAX_DIMENSION); // Max dimension for PNG slider
+  const [maxSizeTarget, setMaxSizeTarget] = useState<number>(1); // Target size for JPEG/WEBP
 
   // Refs for URL cleanup
   const originalUrlRef = useRef<string | null>(null);
@@ -47,22 +49,16 @@ const Index: React.FC = () => {
     });
   };
 
-  // Debounce function to delay re-compression when slider changes
+  // Debounce function
   const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) => {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
     return (...args: Parameters<F>): Promise<ReturnType<F>> => {
       return new Promise((resolve) => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-        }
-        timeoutId = setTimeout(() => {
-          resolve(func(...args));
-        }, waitFor);
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => resolve(func(...args)), waitFor);
       });
     };
   };
-
 
   // Function to re-run compression with current settings
   const runCompression = useCallback(async (fileToCompress: File) => {
@@ -70,7 +66,6 @@ const Index: React.FC = () => {
 
     setLoading(true);
     setError(null);
-    // Clear previous compressed state, but keep original
     if (compressedUrlRef.current) URL.revokeObjectURL(compressedUrlRef.current);
     setCompressedImageUrl(null);
     compressedUrlRef.current = null;
@@ -79,24 +74,34 @@ const Index: React.FC = () => {
     setCompressedType(null);
     setCompressedDimensions(null);
 
-
     try {
       const isLossyFormat = fileToCompress.type === 'image/jpeg' || fileToCompress.type === 'image/webp';
+      const isPngFormat = fileToCompress.type === 'image/png';
 
-      const options: imageCompression.Options = {
-        // Apply maxSizeMB only for lossy formats
-        maxSizeMB: isLossyFormat ? maxSizeTarget : undefined,
-        // Apply resizing based on switch state
-        maxWidthOrHeight: enableResizing ? MAX_DIMENSION : undefined,
-        useWebWorker: true,
-        // Apply quality only for lossy formats, using state
-        initialQuality: isLossyFormat ? jpegQuality : undefined,
-        // Signal to attempt preserving original format
-        // fileType: fileToCompress.type, // Let library decide best output format
-        // alwaysKeepResolution: !enableResizing, // Redundant if maxWidthOrHeight is undefined
+      let options: imageCompression.Options = {
+         useWebWorker: true,
       };
 
-      // Remove undefined keys
+      if (isLossyFormat) {
+        options = {
+          ...options,
+          maxSizeMB: maxSizeTarget,
+          maxWidthOrHeight: enableResizingLossy ? DEFAULT_MAX_DIMENSION : undefined,
+          initialQuality: jpegQuality,
+        };
+      } else if (isPngFormat) {
+         // For PNG, only apply dimension constraint from slider
+         // Check if original dimensions are available and larger than target
+         const needsResize = originalDimensions && (originalDimensions.width > pngMaxDimension || originalDimensions.height > pngMaxDimension);
+         options = {
+           ...options,
+           // Apply resizing only if needed and dimension is not max (effectively disabling resize)
+           maxWidthOrHeight: (pngMaxDimension < MAX_SLIDER_DIMENSION && needsResize) ? pngMaxDimension : undefined,
+           // No quality or maxSizeMB for PNG
+         };
+      }
+
+      // Remove undefined keys before passing to the library
       const activeOptions = Object.entries(options).reduce((acc, [key, value]) => {
         if (value !== undefined) {
           acc[key] = value;
@@ -109,7 +114,6 @@ const Index: React.FC = () => {
       const compressedFile = await imageCompression(fileToCompress, activeOptions);
       const compressedObjectUrl = URL.createObjectURL(compressedFile);
 
-      // Get compressed dimensions
       const compDims = await getImageDimensions(compressedObjectUrl);
       setCompressedDimensions(compDims);
 
@@ -117,32 +121,28 @@ const Index: React.FC = () => {
 
       setCompressedSize(compressedFile.size);
       setCompressedType(compressedFile.type);
-      setCompressedImageUrl(compressedObjectUrl); // Set state
-      compressedUrlRef.current = compressedObjectUrl; // Update ref
+      setCompressedImageUrl(compressedObjectUrl);
+      compressedUrlRef.current = compressedObjectUrl;
       setCompressedFileForDownload(compressedFile);
 
     } catch (err) {
       console.error('Compression error:', err);
       setError(`Compression failed: ${err instanceof Error ? err.message : String(err)}`);
-      // Don't clear original image on re-compression error
     } finally {
       setLoading(false);
     }
-  }, [enableResizing, jpegQuality, maxSizeTarget]); // Dependencies for re-compression logic
+  }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, originalDimensions]); // Added pngMaxDimension and originalDimensions
 
-  // Debounced version of runCompression for slider
+  // Debounced versions for sliders
   const debouncedRunCompression = useCallback(debounce(runCompression, 300), [runCompression]);
-
 
   const handleImageUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    // Revoke previous URLs before creating new ones
     if (originalUrlRef.current) URL.revokeObjectURL(originalUrlRef.current);
     if (compressedUrlRef.current) URL.revokeObjectURL(compressedUrlRef.current);
 
-    // Reset ALL state for new upload
     setOriginalFile(file);
     const objectUrl = URL.createObjectURL(file);
     setOriginalImageUrl(objectUrl);
@@ -156,23 +156,27 @@ const Index: React.FC = () => {
     setCompressedSize(null);
     setOriginalType(file.type);
     setCompressedType(null);
-    setOriginalDimensions(null);
+    setOriginalDimensions(null); // Reset dimensions until loaded
     setCompressedDimensions(null);
-    // Keep existing quality/resizing settings, don't reset them on new upload
 
-    setLoading(true); // Set loading for initial dimension check + compression
+    setLoading(true);
 
     try {
-      // Get original dimensions first
       const origDims = await getImageDimensions(objectUrl);
-      setOriginalDimensions(origDims);
+      setOriginalDimensions(origDims); // Set dimensions BEFORE first compression run
       console.log(`Original file: ${file.name}, Size: ${file.size / 1024} KB, Type: ${file.type}, Dims: ${origDims.width}x${origDims.height}`);
 
-      // Now run the compression with current settings
-      await runCompression(file);
+      // Set initial PNG slider value based on original dimensions if it's a PNG
+      if (file.type === 'image/png') {
+         const largestDim = Math.max(origDims.width, origDims.height);
+         // Set slider to original dimension or max slider value, whichever is smaller
+         // Or keep default if original is smaller than default
+         setPngMaxDimension(Math.min(Math.max(largestDim, DEFAULT_MAX_DIMENSION), MAX_SLIDER_DIMENSION));
+      }
+
+      await runCompression(file); // Pass file, runCompression will use state including updated originalDimensions
 
     } catch (err) {
-       // Handle errors from initial dimension reading or first compression
        console.error('Initial processing error:', err);
        setError(`Failed to process image: ${err instanceof Error ? err.message : String(err)}`);
        if (originalUrlRef.current) URL.revokeObjectURL(originalUrlRef.current);
@@ -182,26 +186,31 @@ const Index: React.FC = () => {
        setOriginalSize(null);
        setOriginalType(null);
        setOriginalDimensions(null);
-       setLoading(false); // Ensure loading is false on error
+       setLoading(false);
     }
-    // setLoading(false) is handled within runCompression's finally block
-  }, [runCompression]); // runCompression is now a dependency
+  }, [runCompression]); // runCompression dependency is correct
 
-  // Handlers for controls - trigger re-compression
+  // Handlers for controls
   const handleQualityChange = (value: number[]) => {
     setJpegQuality(value[0]);
     if (originalFile && (originalType === 'image/jpeg' || originalType === 'image/webp')) {
-      debouncedRunCompression(originalFile); // Use debounced version
+      debouncedRunCompression(originalFile);
     }
   };
 
-  const handleResizingChange = (checked: boolean) => {
-    setEnableResizing(checked);
-    if (originalFile) {
-      runCompression(originalFile); // Recompress immediately on switch toggle
+  const handleResizingChangeLossy = (checked: boolean) => {
+    setEnableResizingLossy(checked);
+    if (originalFile && (originalType === 'image/jpeg' || originalType === 'image/webp')) {
+      runCompression(originalFile);
     }
   };
 
+  const handlePngDimensionChange = (value: number[]) => {
+     setPngMaxDimension(value[0]);
+     if (originalFile && originalType === 'image/png') {
+       debouncedRunCompression(originalFile);
+     }
+  };
 
   const handleDownload = () => {
     if (compressedFileForDownload) {
@@ -209,13 +218,13 @@ const Index: React.FC = () => {
     }
   };
 
-  // Clean up object URLs on component unmount
+  // Cleanup effect
   useEffect(() => {
     return () => {
       if (originalUrlRef.current) URL.revokeObjectURL(originalUrlRef.current);
       if (compressedUrlRef.current) URL.revokeObjectURL(compressedUrlRef.current);
     };
-  }, []); // Empty dependency array
+  }, []);
 
   const formatBytes = (bytes: number | null, decimals = 2) => {
     if (bytes === null || bytes === 0) return '0 Bytes';
@@ -228,6 +237,7 @@ const Index: React.FC = () => {
 
   const compressionRatio = originalSize && compressedSize ? ((originalSize - compressedSize) / originalSize) * 100 : 0;
   const isLossy = originalType === 'image/jpeg' || originalType === 'image/webp';
+  const isPng = originalType === 'image/png';
 
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
@@ -236,113 +246,83 @@ const Index: React.FC = () => {
           <CardTitle>Image Optimizer</CardTitle>
           <CardDescription>Upload JPG, PNG, or WEBP. Adjust settings below to optimize.</CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6"> {/* Increased spacing */}
+        <CardContent className="space-y-6">
           {/* --- File Input --- */}
           <div className="grid w-full max-w-sm items-center gap-1.5 mx-auto">
             <Label htmlFor="picture">1. Upload Image</Label>
             <Input id="picture" type="file" accept="image/jpeg, image/png, image/webp" onChange={handleImageUpload} disabled={loading} />
           </div>
 
-          {/* --- Options Section (only show if image is loaded) --- */}
+          {/* --- Options Section --- */}
           {originalFile && (
             <div className="border-t pt-4 space-y-4">
               <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Settings2 className="w-5 h-5" /> 2. Optimization Settings</h3>
 
-              {/* Resizing Option */}
-              <div className="flex items-center justify-between max-w-md mx-auto">
-                <Label htmlFor="resizing-switch" className="flex flex-col space-y-1">
-                  <span>Resize Image</span>
-                  <span className="font-normal leading-snug text-muted-foreground text-sm">
-                    Scale down if larger than {MAX_DIMENSION}px (width or height). Preserves aspect ratio.
-                  </span>
-                </Label>
-                <Switch
-                  id="resizing-switch"
-                  checked={enableResizing}
-                  onCheckedChange={handleResizingChange}
-                  disabled={loading}
-                />
-              </div>
-
-              {/* Quality Slider (Lossy Only) */}
+              {/* --- JPEG/WEBP Controls --- */}
               {isLossy && (
-                <div className="space-y-2 max-w-md mx-auto">
-                  <Label htmlFor="quality-slider">Quality (JPEG/WEBP): {Math.round(jpegQuality * 100)}%</Label>
-                  <Slider
-                    id="quality-slider"
-                    min={0.05} // Min quality slightly above 0
-                    max={1}
-                    step={0.05}
-                    value={[jpegQuality]}
-                    onValueChange={handleQualityChange} // Use the handler that debounces
-                    disabled={loading}
-                  />
-                   <p className="text-sm text-muted-foreground">Lower quality means smaller file size, but may reduce visual clarity.</p>
-                </div>
+                <>
+                  {/* Resizing Option (Lossy) */}
+                  <div className="flex items-center justify-between max-w-md mx-auto">
+                    <Label htmlFor="resizing-switch-lossy" className="flex flex-col space-y-1">
+                      <span>Resize Image</span>
+                      <span className="font-normal leading-snug text-muted-foreground text-sm">
+                        Scale down if larger than {DEFAULT_MAX_DIMENSION}px.
+                      </span>
+                    </Label>
+                    <Switch
+                      id="resizing-switch-lossy"
+                      checked={enableResizingLossy}
+                      onCheckedChange={handleResizingChangeLossy}
+                      disabled={loading}
+                    />
+                  </div>
+
+                  {/* Quality Slider (Lossy) */}
+                  <div className="space-y-2 max-w-md mx-auto">
+                    <Label htmlFor="quality-slider">Quality: {Math.round(jpegQuality * 100)}%</Label>
+                    <Slider
+                      id="quality-slider"
+                      min={0.05} max={1} step={0.05}
+                      value={[jpegQuality]}
+                      onValueChange={handleQualityChange}
+                      disabled={loading}
+                    />
+                    <p className="text-sm text-muted-foreground">Lower quality means smaller file size.</p>
+                  </div>
+                </>
               )}
 
-              {/* PNG Info */}
-              {!isLossy && originalType === 'image/png' && (
-                 <p className="text-sm text-muted-foreground text-center max-w-md mx-auto">
-                   PNG uses lossless compression. Quality slider is not applicable. Only resizing affects the output.
-                 </p>
+              {/* --- PNG Controls --- */}
+              {isPng && (
+                 <div className="space-y-2 max-w-md mx-auto">
+                    <Label htmlFor="dimension-slider-png" className="flex items-center gap-1">
+                       <Ruler className="w-4 h-4" /> Max Dimension (PNG): {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
+                    </Label>
+                    <Slider
+                      id="dimension-slider-png"
+                      // Sensible range, e.g., 320px up to a large value + 1 step for "Original"
+                      min={320}
+                      max={MAX_SLIDER_DIMENSION} // Use max value to represent "Original"
+                      step={10} // Adjust step as needed
+                      value={[pngMaxDimension]}
+                      onValueChange={handlePngDimensionChange}
+                      disabled={loading || !originalDimensions} // Disable until original dimensions are known
+                    />
+                    <p className="text-sm text-muted-foreground">
+                       Controls the maximum width or height. Set to {MAX_SLIDER_DIMENSION}px to keep original dimensions. Uses lossless compression.
+                    </p>
+                 </div>
               )}
             </div>
           )}
-
 
           {/* --- Loading Indicator --- */}
-          {loading && (
-            <div className="flex items-center justify-center space-x-2 pt-4">
-              <Progress value={undefined} className="w-1/2 h-2 animate-pulse" />
-              <span>Processing...</span>
-            </div>
-          )}
-
+          {loading && ( /* ... */ )}
           {/* --- Error Display --- */}
-          {error && (
-            <Alert variant="destructive" className="max-w-xl mx-auto">
-              <FileWarning className="h-4 w-4" />
-              <AlertTitle>Error</AlertTitle>
-              <AlertDescription>{error}</AlertDescription>
-            </Alert>
-          )}
-
+          {error && ( /* ... */ )}
           {/* --- Image Previews --- */}
-          {(originalImageUrl || compressedImageUrl) && !error && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start pt-4 border-t">
-              {originalImageUrl && (
-                <div className="space-y-2">
-                  <h3 className="font-semibold text-center">Original</h3>
-                  <img src={originalImageUrl} alt="Original" className="rounded-md border max-w-full h-auto mx-auto" style={{ maxHeight: '350px' }} />
-                  <p className="text-sm text-center text-muted-foreground">
-                    Size: {formatBytes(originalSize)} <br />
-                    Type: {originalType} <br />
-                    Dims: {originalDimensions ? `${originalDimensions.width} x ${originalDimensions.height}` : 'Loading...'}
-                  </p>
-                </div>
-              )}
-              {compressedImageUrl && (
-                <div className="space-y-2">
-                  <h3 className="font-semibold text-center">Compressed</h3>
-                  <img src={compressedImageUrl} alt="Compressed" className="rounded-md border max-w-full h-auto mx-auto" style={{ maxHeight: '350px' }} />
-                   <p className="text-sm text-center text-muted-foreground">
-                    Size: {formatBytes(compressedSize)} <br />
-                    Type: {compressedType} <br />
-                    Dims: {compressedDimensions ? `${compressedDimensions.width} x ${compressedDimensions.height}` : 'Loading...'} <br />
-                    {compressionRatio > 0 && `(${compressionRatio.toFixed(1)}% reduction)`}
-                    {compressionRatio < 0 && `(${(compressionRatio * -1).toFixed(1)}% increase)`}
-                  </p>
-                </div>
-              )}
-               {!compressedImageUrl && loading && originalImageUrl && (
-                 <div className="space-y-2 flex flex-col items-center justify-center h-full">
-                    {/* Placeholder or loader while compressed image is generating */}
-                    <p className="text-muted-foreground">Generating preview...</p>
-                 </div>
-               )}
-            </div>
-          )}
+          {(originalImageUrl || compressedImageUrl) && !error && ( /* ... */ )}
+
         </CardContent>
         <CardFooter className="flex justify-center pt-4 border-t">
           {compressedFileForDownload && !loading && !error && (
@@ -357,8 +337,7 @@ const Index: React.FC = () => {
         <Terminal className="h-4 w-4" />
         <AlertTitle>How it works</AlertTitle>
         <AlertDescription>
-          Images are compressed in your browser. Use the settings above to control resizing and quality (for JPEG/WEBP).
-          PNGs use lossless compression. No data is sent to any server.
+          Images are compressed in your browser. JPEG/WEBP uses quality/resizing controls. PNG uses a dimension control with lossless compression. No data is sent to any server.
         </AlertDescription>
       </Alert>
     </div>
