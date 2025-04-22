@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive } from "lucide-react";
+import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive, ArrowRight } from "lucide-react"; // Added ArrowRight
 import imageCompression from 'browser-image-compression';
 import { saveAs } from 'file-saver';
 import { Slider } from "@/components/ui/slider";
@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import JSZip from 'jszip';
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Import Tabs components
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // --- Constants ---
 const DEFAULT_MAX_DIMENSION = 1920;
@@ -70,10 +70,8 @@ const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) =
 // Function to get file type label AND color classes
 const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: string; controlClassName: string; tabTriggerClassName: string } => {
    const subtype = mimeType?.split('/')[1] || 'unknown';
-   // Define base classes for tabs
    const baseTabTrigger = "data-[state=active]:shadow-sm";
    switch (subtype) {
-      // Define badge colors, control text/border colors, and active tab colors
       case 'jpeg': return { label: 'JPG', badgeClassName: 'bg-orange-100 text-orange-800 border-orange-200', controlClassName: 'text-orange-700 border-orange-300', tabTriggerClassName: cn(baseTabTrigger, 'data-[state=active]:bg-orange-100 data-[state=active]:text-orange-900') };
       case 'png': return { label: 'PNG', badgeClassName: 'bg-blue-100 text-blue-800 border-blue-200', controlClassName: 'text-blue-700 border-blue-300', tabTriggerClassName: cn(baseTabTrigger, 'data-[state=active]:bg-blue-100 data-[state=active]:text-blue-900') };
       case 'webp': return { label: 'WEBP', badgeClassName: 'bg-green-100 text-green-800 border-green-200', controlClassName: 'text-green-700 border-green-300', tabTriggerClassName: cn(baseTabTrigger, 'data-[state=active]:bg-green-100 data-[state=active]:text-green-900') };
@@ -253,17 +251,12 @@ const Index: React.FC = () => {
           {totalFiles > 0 && (
             <div className="border-t pt-4 space-y-4">
               <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Settings2 className="w-5 h-5" /> 2. Global Settings</h3>
-
-              {/* Tabs Container */}
               <Tabs defaultValue="lossy" className="w-full max-w-xl mx-auto">
                 <TabsList className="grid w-full grid-cols-2">
                   <TabsTrigger value="lossy" className={lossyFileTypeInfo.tabTriggerClassName}>JPEG / WEBP</TabsTrigger>
                   <TabsTrigger value="png" className={pngFileTypeInfo.tabTriggerClassName}>PNG</TabsTrigger>
                 </TabsList>
-
-                {/* Lossy Settings Tab */}
                 <TabsContent value="lossy" className="mt-4 border rounded-md p-4 space-y-4">
-                   {/* <p className={cn("font-semibold text-center text-sm mb-2", lossyFileTypeInfo.controlClassName)}>JPEG / WEBP Settings</p> */}
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
                       <div className="space-y-2">
                          <Label htmlFor="quality-slider" className={cn(lossyFileTypeInfo.controlClassName)}>Quality: {Math.round(jpegQuality * 100)}%</Label>
@@ -275,10 +268,7 @@ const Index: React.FC = () => {
                       </div>
                    </div>
                 </TabsContent>
-
-                {/* PNG Settings Tab */}
                 <TabsContent value="png" className="mt-4 border rounded-md p-4 space-y-2">
-                   {/* <p className={cn("font-semibold text-center text-sm mb-2", pngFileTypeInfo.controlClassName)}>PNG Settings</p> */}
                    <Label htmlFor="dimension-slider-png" className={cn("flex items-center gap-1 justify-center", pngFileTypeInfo.controlClassName)}>
                       <Ruler className="w-4 h-4" /> Max Dimension: {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
                    </Label>
@@ -298,7 +288,11 @@ const Index: React.FC = () => {
                <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Files className="w-5 h-5" /> 3. Files ({totalFiles})</h3>
                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {imageFiles.map((file) => {
-                     const fileTypeInfo = getFileTypeInfo(file.originalType); // Get label and classes
+                     const fileTypeInfo = getFileTypeInfo(file.originalType);
+                     const isDone = file.status === 'done' && file.compressedSize !== null;
+                     const sizeReduced = isDone && file.compressedSize! < file.originalSize;
+                     const sizeIncreased = isDone && file.compressedSize! > file.originalSize;
+
                      return (
                         <Card key={file.id} className="relative overflow-hidden group">
                            <Button variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6 z-10 bg-background/50 hover:bg-destructive hover:text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeImageFile(file.id)} disabled={isProcessing || isZipping} aria-label="Remove file">
@@ -314,12 +308,30 @@ const Index: React.FC = () => {
                                     {fileTypeInfo.label}
                                  </Badge>
                               </div>
+                              {/* Size and Status Row */}
                               <div className="text-xs text-muted-foreground flex justify-between items-center">
-                                 <span>{formatBytes(file.originalSize)}</span>
-                                 {file.status === 'done' && file.compressedSize !== null && (<span className="text-green-600 font-semibold">{formatBytes(file.compressedSize)}</span>)}
-                                 {file.status === 'error' && (<span className="text-red-600 font-semibold">Error</span>)}
-                                 {(file.status === 'compressing' || file.status === 'loading_dims') && (<Loader2 className="h-3 w-3 animate-spin text-blue-500" />)}
-                                 {file.status === 'pending' && (<span className="text-gray-500">Pending</span>)}
+                                 {/* Left side: Original Size or Status */}
+                                 <span className="flex-shrink-0">{formatBytes(file.originalSize)}</span>
+
+                                 {/* Middle: Arrow or Status Icon */}
+                                 <div className="flex-grow flex justify-center items-center px-1">
+                                    {isDone && <ArrowRight className={cn("h-3 w-3", sizeReduced ? "text-green-500" : sizeIncreased ? "text-red-500" : "text-gray-400")} />}
+                                    {file.status === 'error' && (<FileWarning className="h-3 w-3 text-red-500" />)}
+                                    {(file.status === 'compressing' || file.status === 'loading_dims') && (<Loader2 className="h-3 w-3 animate-spin text-blue-500" />)}
+                                    {file.status === 'pending' && (<span className="text-xs text-gray-500">...</span>)}
+                                 </div>
+
+                                 {/* Right side: Compressed Size or Status Text */}
+                                 <span className={cn(
+                                     "flex-shrink-0 font-semibold",
+                                     isDone && sizeReduced && "text-green-600",
+                                     isDone && sizeIncreased && "text-red-600",
+                                     isDone && !sizeReduced && !sizeIncreased && "text-gray-500",
+                                     file.status === 'error' && "text-red-600",
+                                     (file.status === 'compressing' || file.status === 'loading_dims' || file.status === 'pending') && "text-transparent" // Hide text placeholder during processing
+                                 )}>
+                                     {isDone ? formatBytes(file.compressedSize) : file.status === 'error' ? 'Error' : '...'}
+                                 </span>
                               </div>
                               {file.status === 'error' && file.error && (<p className="text-xs text-red-600 truncate" title={file.error}>{file.error}</p>)}
                            </CardContent>
