@@ -67,14 +67,15 @@ const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) =
 };
 
 // Function to get file type label AND color classes
-const getFileTypeInfo = (mimeType: string): { label: string; className: string } => {
+const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: string; controlClassName: string } => {
    const subtype = mimeType?.split('/')[1] || 'unknown';
    switch (subtype) {
-      case 'jpeg': return { label: 'JPG', className: 'bg-orange-100 text-orange-800 border-orange-200' };
-      case 'png': return { label: 'PNG', className: 'bg-blue-100 text-blue-800 border-blue-200' };
-      case 'webp': return { label: 'WEBP', className: 'bg-green-100 text-green-800 border-green-200' };
-      case 'gif': return { label: 'GIF', className: 'bg-purple-100 text-purple-800 border-purple-200' };
-      default: return { label: subtype.toUpperCase(), className: 'bg-gray-100 text-gray-800 border-gray-200' };
+      // Define badge colors and corresponding control text/border colors
+      case 'jpeg': return { label: 'JPG', badgeClassName: 'bg-orange-100 text-orange-800 border-orange-200', controlClassName: 'text-orange-700 border-orange-300' };
+      case 'png': return { label: 'PNG', badgeClassName: 'bg-blue-100 text-blue-800 border-blue-200', controlClassName: 'text-blue-700 border-blue-300' };
+      case 'webp': return { label: 'WEBP', badgeClassName: 'bg-green-100 text-green-800 border-green-200', controlClassName: 'text-green-700 border-green-300' }; // Use green for WEBP controls too
+      case 'gif': return { label: 'GIF', badgeClassName: 'bg-purple-100 text-purple-800 border-purple-200', controlClassName: 'text-purple-700 border-purple-300' };
+      default: return { label: subtype.toUpperCase(), badgeClassName: 'bg-gray-100 text-gray-800 border-gray-200', controlClassName: 'text-gray-700 border-gray-300' };
    }
 };
 
@@ -226,6 +227,10 @@ const Index: React.FC = () => {
   const processingFilesCount = imageFiles.filter(f => f.status === 'compressing' || f.status === 'loading_dims').length;
   const canDownload = completedFiles > 0 && !isProcessing && !isZipping;
 
+  // Get color classes for controls (use JPG for the lossy section, PNG for the PNG section)
+  const lossyControlClasses = getFileTypeInfo('image/jpeg').controlClassName;
+  const pngControlClasses = getFileTypeInfo('image/png').controlClassName;
+
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
       <Card className="w-full max-w-4xl">
@@ -243,21 +248,29 @@ const Index: React.FC = () => {
 
           {/* Settings */}
           {totalFiles > 0 && (
-            <div className="border-t pt-4 space-y-4">
+            <div className="border-t pt-4 space-y-6"> {/* Increased spacing */}
               <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Settings2 className="w-5 h-5" /> 2. Global Settings</h3>
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-xl mx-auto">
-                  <div className="space-y-2">
-                     <Label htmlFor="quality-slider">JPEG/WEBP Quality: {Math.round(jpegQuality * 100)}%</Label>
-                     <Slider id="quality-slider" min={0.05} max={1} step={0.05} value={[jpegQuality]} onValueChange={handleQualityChange} disabled={isProcessing || isZipping} />
-                  </div>
-                  <div className="flex items-center justify-center space-x-2 pt-5">
-                     <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isProcessing || isZipping} />
-                     <Label htmlFor="resizing-switch-lossy">Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
+
+               {/* JPEG/WEBP Settings Section */}
+               <div className={cn("border p-4 rounded-md max-w-xl mx-auto space-y-4", lossyControlClasses)}>
+                  <p className={cn("font-semibold text-center", lossyControlClasses)}>JPEG / WEBP Settings</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                     <div className="space-y-2">
+                        <Label htmlFor="quality-slider" className={cn(lossyControlClasses)}>Quality: {Math.round(jpegQuality * 100)}%</Label>
+                        <Slider id="quality-slider" min={0.05} max={1} step={0.05} value={[jpegQuality]} onValueChange={handleQualityChange} disabled={isProcessing || isZipping} />
+                     </div>
+                     <div className="flex items-center justify-center space-x-2 pt-5 sm:pt-0">
+                        <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isProcessing || isZipping} />
+                        <Label htmlFor="resizing-switch-lossy" className={cn(lossyControlClasses)}>Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
+                     </div>
                   </div>
                </div>
-               <div className="space-y-2 max-w-md mx-auto">
-                  <Label htmlFor="dimension-slider-png" className="flex items-center gap-1 justify-center">
-                     <Ruler className="w-4 h-4" /> Max Dimension (PNG): {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
+
+               {/* PNG Settings Section */}
+               <div className={cn("border p-4 rounded-md max-w-xl mx-auto space-y-2", pngControlClasses)}>
+                  <p className={cn("font-semibold text-center", pngControlClasses)}>PNG Settings</p>
+                  <Label htmlFor="dimension-slider-png" className={cn("flex items-center gap-1 justify-center", pngControlClasses)}>
+                     <Ruler className="w-4 h-4" /> Max Dimension: {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
                   </Label>
                   <Slider id="dimension-slider-png" min={320} max={MAX_SLIDER_DIMENSION} step={10} value={[pngMaxDimension]} onValueChange={handlePngDimensionChange} disabled={isProcessing || isZipping} />
                </div>
@@ -286,8 +299,7 @@ const Index: React.FC = () => {
                               </div>
                               <div className="flex items-center justify-between gap-2">
                                  <p className="text-xs font-medium truncate flex-1" title={file.originalFile.name}>{file.originalFile.name}</p>
-                                 {/* Apply dynamic classes here */}
-                                 <Badge variant="outline" className={cn("text-xs px-1.5 py-0.5 border", fileTypeInfo.className)}>
+                                 <Badge variant="outline" className={cn("text-xs px-1.5 py-0.5 border", fileTypeInfo.badgeClassName)}>
                                     {fileTypeInfo.label}
                                  </Badge>
                               </div>
