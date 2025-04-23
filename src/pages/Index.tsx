@@ -7,19 +7,19 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive, ArrowRight } from "lucide-react"; // Added ArrowRight
+import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive, ArrowRight } from "lucide-react";
 import imageCompression from 'browser-image-compression';
-import { saveAs } from 'file-saver';
+import { saveAs } from 'file-saver'; // Keep file-saver
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import JSZip from 'jszip';
+// import JSZip from 'jszip'; // Remove JSZip import
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // --- Constants ---
 const DEFAULT_MAX_DIMENSION = 1920;
-const MAX_SLIDER_DIMENSION = 4000;
+const MAX_SLIDER_DIMENSION = 4000; // Represents "Original" dimension
 
 // --- Interfaces ---
 interface ImageFileState {
@@ -85,9 +85,10 @@ const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: str
 const Index: React.FC = () => {
   // --- State ---
   const [imageFiles, setImageFiles] = useState<ImageFileState[]>([]);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  const [zipProgress, setZipProgress] = useState<number>(0);
-  const [isZipping, setIsZipping] = useState<boolean>(false);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false); // Global processing flag
+  // Remove ZIP state
+  // const [zipProgress, setZipProgress] = useState<number>(0);
+  // const [isZipping, setIsZipping] = useState<boolean>(false);
 
   // Settings State
   const [jpegQuality, setJpegQuality] = useState<number>(0.7);
@@ -98,7 +99,7 @@ const Index: React.FC = () => {
   // Refs
   const objectUrlRefs = useRef<Record<string, { original: string | null, compressed: string | null }>>({});
 
-  // --- Core Logic (Callbacks and Effects remain largely the same) ---
+  // --- Core Logic ---
   const updateFileState = (id: string, updates: Partial<ImageFileState>) => {
     setImageFiles(currentFiles =>
       currentFiles.map(file =>
@@ -119,41 +120,47 @@ const Index: React.FC = () => {
       if (isLossyFormat) {
         options = { ...options, maxSizeMB: maxSizeTarget, maxWidthOrHeight: enableResizingLossy ? DEFAULT_MAX_DIMENSION : undefined, initialQuality: jpegQuality };
       } else if (isPngFormat) {
-        const needsResize = originalDimensions && (originalDimensions.width > pngMaxDimension || originalDimensions.height > pngMaxDimension);
-        options = { ...options, maxWidthOrHeight: (pngMaxDimension < MAX_SLIDER_DIMENSION && needsResize) ? pngMaxDimension : undefined };
+        options = { ...options, maxWidthOrHeight: pngMaxDimension < MAX_SLIDER_DIMENSION ? pngMaxDimension : undefined };
       }
 
       const activeOptions = Object.entries(options).reduce((acc, [key, value]) => { if (value !== undefined) acc[key] = value; return acc; }, {} as imageCompression.Options);
-      console.log(`Compressing ${originalFile.name} with options:`, activeOptions);
+      console.log(`Compressing ${originalFile.name} (${id}) with options:`, activeOptions);
+      const startTime = performance.now();
       const compressedFile = await imageCompression(originalFile, activeOptions);
+      const endTime = performance.now();
+      console.log(`Compression took ${(endTime - startTime).toFixed(2)} ms for ${id}`);
+
 
       if (objectUrlRefs.current[id]?.compressed) URL.revokeObjectURL(objectUrlRefs.current[id].compressed!);
       const compressedObjectUrl = URL.createObjectURL(compressedFile);
       objectUrlRefs.current[id] = { ...objectUrlRefs.current[id], compressed: compressedObjectUrl };
 
       const compDims = await getImageDimensions(compressedObjectUrl);
-      console.log(`Compressed ${originalFile.name}: Size: ${compressedFile.size / 1024} KB, Type: ${compressedFile.type}, Dims: ${compDims.width}x${compDims.height}`);
+      console.log(`Compressed ${originalFile.name} (${id}): Size: ${compressedFile.size / 1024} KB, Type: ${compressedFile.type}, Dims: ${compDims.width}x${compDims.height}`);
 
       return { compressedFile, compressedImageUrl: compressedObjectUrl, compressedSize: compressedFile.size, compressedType: compressedFile.type, compressedDimensions: compDims, status: 'done', error: null };
     } catch (err) {
-      console.error(`Compression error for ${originalFile.name}:`, err);
+      console.error(`Compression error for ${originalFile.name} (${id}):`, err);
       return { status: 'error', error: err instanceof Error ? err.message : String(err), compressedFile: null, compressedImageUrl: null, compressedSize: null, compressedType: null, compressedDimensions: null };
     }
   };
 
   const processFiles = useCallback(async (filesToProcess: ImageFileState[]) => {
     if (filesToProcess.length === 0 || isProcessing) return;
+    console.log(`Processing ${filesToProcess.length} files...`);
     setIsProcessing(true);
 
     const promises = filesToProcess.map(async (fileState) => {
       let currentDims = fileState.originalDimensions;
       if (!currentDims) {
         try {
+          console.log(`Loading dimensions for ${fileState.id}`);
           updateFileState(fileState.id, { status: 'loading_dims' });
           currentDims = await getImageDimensions(fileState.originalImageUrl);
           updateFileState(fileState.id, { originalDimensions: currentDims });
+          console.log(`Dimensions loaded for ${fileState.id}: ${currentDims.width}x${currentDims.height}`);
         } catch (dimError) {
-          console.error(`Dimension loading error for ${fileState.originalFile.name}:`, dimError);
+          console.error(`Dimension loading error for ${fileState.originalFile.name} (${fileState.id}):`, dimError);
           updateFileState(fileState.id, { status: 'error', error: 'Failed to load image dimensions.' }); return;
         }
       }
@@ -162,13 +169,19 @@ const Index: React.FC = () => {
     });
 
     await Promise.allSettled(promises);
+    console.log(`Finished processing batch.`);
     setIsProcessing(false);
   }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]);
 
   const debouncedProcessAllFiles = useCallback(debounce(() => {
-      const applicableFiles = imageFiles.filter(f => f.status !== 'error');
-      if (applicableFiles.length > 0) { console.log("Settings changed, reprocessing..."); processFiles(applicableFiles); }
-  }, 500), [imageFiles, processFiles]);
+      const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
+      if (applicableFiles.length > 0 && !isProcessing) {
+          console.log("Settings changed, reprocessing applicable files...");
+          processFiles(applicableFiles);
+      } else if (isProcessing) {
+          console.log("Settings changed, but processing is ongoing. Skipping reprocess.");
+      }
+  }, 500), [imageFiles, processFiles, isProcessing]);
 
   const handleImageUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files; if (!files || files.length === 0) return;
@@ -184,6 +197,7 @@ const Index: React.FC = () => {
 
     if (newImageFiles.length === 0) { event.target.value = ''; return; }
     setImageFiles(current => [...current, ...newImageFiles]);
+    await new Promise(resolve => setTimeout(resolve, 0));
     await processFiles(newImageFiles);
     event.target.value = '';
   }, [processFiles]);
@@ -191,21 +205,30 @@ const Index: React.FC = () => {
   const handleQualityChange = (value: number[]) => { setJpegQuality(value[0]); debouncedProcessAllFiles(); };
   const handleResizingChangeLossy = (checked: boolean) => {
     setEnableResizingLossy(checked);
-    const applicableFiles = imageFiles.filter(f => f.status !== 'error' && (f.originalType === 'image/jpeg' || f.originalType === 'image/webp'));
-    if (applicableFiles.length > 0) { console.log("Lossy resize setting changed..."); processFiles(applicableFiles); }
+    debouncedProcessAllFiles();
   };
   const handlePngDimensionChange = (value: number[]) => { setPngMaxDimension(value[0]); debouncedProcessAllFiles(); };
 
-  const handleDownloadZip = async () => {
-    const filesToZip = imageFiles.filter(f => f.status === 'done' && f.compressedFile);
-    if (filesToZip.length === 0) { alert("No successfully compressed files."); return; }
-    setIsZipping(true); setZipProgress(0); const zip = new JSZip();
-    filesToZip.forEach((fileState) => zip.file(fileState.originalFile.name, fileState.compressedFile!));
-    try {
-      const zipBlob = await zip.generateAsync({ type: "blob", streamFiles: true }, (metadata) => setZipProgress(metadata.percent));
-      saveAs(zipBlob, "compressed_images.zip");
-    } catch (err) { console.error("ZIP Error:", err); setError("Failed to create ZIP."); }
-    finally { setIsZipping(false); setZipProgress(0); }
+  // New function to download all completed files individually
+  const handleDownloadAll = () => {
+    const filesToDownload = imageFiles.filter(f => f.status === 'done' && f.compressedFile);
+    if (filesToDownload.length === 0) {
+      alert("No successfully compressed files to download.");
+      return;
+    }
+
+    console.log(`Downloading ${filesToDownload.length} files individually...`);
+    filesToDownload.forEach((fileState, index) => {
+      // Add a small delay between downloads to prevent browser blocking popups
+      setTimeout(() => {
+        try {
+          saveAs(fileState.compressedFile!, `compressed_${fileState.originalFile.name}`);
+        } catch (err) {
+          console.error(`Error downloading ${fileState.originalFile.name}:`, err);
+          // Optionally show an error message to the user for this specific file
+        }
+      }, index * 300); // 300ms delay between each download start
+    });
   };
 
   useEffect(() => {
@@ -226,7 +249,7 @@ const Index: React.FC = () => {
   const completedFiles = imageFiles.filter(f => f.status === 'done').length;
   const errorFiles = imageFiles.filter(f => f.status === 'error').length;
   const processingFilesCount = imageFiles.filter(f => f.status === 'compressing' || f.status === 'loading_dims').length;
-  const canDownload = completedFiles > 0 && !isProcessing && !isZipping;
+  const canDownload = completedFiles > 0 && !isProcessing; // Removed isZipping check
 
   // Get color classes for controls/tabs
   const lossyFileTypeInfo = getFileTypeInfo('image/jpeg');
@@ -237,13 +260,13 @@ const Index: React.FC = () => {
       <Card className="w-full max-w-4xl">
         <CardHeader>
           <CardTitle>Bulk Image Optimizer</CardTitle>
-          <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download as ZIP.</CardDescription>
+          <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download individually.</CardDescription> {/* Updated description */}
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Input */}
           <div className="grid w-full max-w-md items-center gap-1.5 mx-auto">
             <Label htmlFor="picture" className="text-center">1. Upload Images</Label>
-            <Input id="picture" type="file" accept="image/jpeg, image/png, image/webp" onChange={handleImageUpload} multiple disabled={isProcessing || isZipping} className="h-12 text-center cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90" />
+            <Input id="picture" type="file" accept="image/jpeg, image/png, image/webp" onChange={handleImageUpload} multiple disabled={isProcessing} className="h-12 text-center cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90" />
             <p className="text-xs text-muted-foreground text-center">Select one or more files.</p>
           </div>
 
@@ -260,10 +283,10 @@ const Index: React.FC = () => {
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
                       <div className="space-y-2">
                          <Label htmlFor="quality-slider" className={cn(lossyFileTypeInfo.controlClassName)}>Quality: {Math.round(jpegQuality * 100)}%</Label>
-                         <Slider id="quality-slider" min={0.05} max={1} step={0.05} value={[jpegQuality]} onValueChange={handleQualityChange} disabled={isProcessing || isZipping} />
+                         <Slider id="quality-slider" min={0.05} max={1} step={0.05} value={[jpegQuality]} onValueChange={handleQualityChange} disabled={isProcessing} />
                       </div>
                       <div className="flex items-center justify-center space-x-2 pt-5 sm:pt-0">
-                         <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isProcessing || isZipping} />
+                         <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isProcessing} />
                          <Label htmlFor="resizing-switch-lossy" className={cn(lossyFileTypeInfo.controlClassName)}>Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
                       </div>
                    </div>
@@ -272,7 +295,7 @@ const Index: React.FC = () => {
                    <Label htmlFor="dimension-slider-png" className={cn("flex items-center gap-1 justify-center", pngFileTypeInfo.controlClassName)}>
                       <Ruler className="w-4 h-4" /> Max Dimension: {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
                    </Label>
-                   <Slider id="dimension-slider-png" min={320} max={MAX_SLIDER_DIMENSION} step={10} value={[pngMaxDimension]} onValueChange={handlePngDimensionChange} disabled={isProcessing || isZipping} />
+                   <Slider id="dimension-slider-png" min={320} max={MAX_SLIDER_DIMENSION} step={10} value={[pngMaxDimension]} onValueChange={handlePngDimensionChange} disabled={isProcessing} />
                 </TabsContent>
               </Tabs>
             </div>
@@ -280,7 +303,8 @@ const Index: React.FC = () => {
 
           {/* Status Indicators */}
           {isProcessing && ( <div className="flex items-center justify-center space-x-2 pt-4 text-blue-600"><Loader2 className="h-5 w-5 animate-spin" /><span>Processing {processingFilesCount} of {totalFiles}...</span></div> )}
-          {isZipping && ( <div className="flex flex-col items-center justify-center space-y-2 pt-4 text-green-600"><FileArchive className="h-5 w-5 animate-pulse" /><span>Creating ZIP...</span><Progress value={zipProgress} className="w-1/2 h-2" /></div> )}
+          {/* Removed Zipping indicator */}
+          {/* {isZipping && ( <div className="flex flex-col items-center justify-center space-y-2 pt-4 text-green-600"><FileArchive className="h-5 w-5 animate-pulse" /><span>Creating ZIP...</span><Progress value={zipProgress} className="w-1/2 h-2" /></div> )} */}
 
           {/* Image List */}
           {totalFiles > 0 && (
@@ -295,7 +319,7 @@ const Index: React.FC = () => {
 
                      return (
                         <Card key={file.id} className="relative overflow-hidden group">
-                           <Button variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6 z-10 bg-background/50 hover:bg-destructive hover:text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeImageFile(file.id)} disabled={isProcessing || isZipping} aria-label="Remove file">
+                           <Button variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6 z-10 bg-background/50 hover:bg-destructive hover:text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeImageFile(file.id)} disabled={isProcessing} aria-label="Remove file">
                               <XCircle className="h-4 w-4" />
                            </Button>
                            <CardContent className="p-3 space-y-2">
@@ -310,25 +334,20 @@ const Index: React.FC = () => {
                               </div>
                               {/* Size and Status Row */}
                               <div className="text-xs text-muted-foreground flex justify-between items-center">
-                                 {/* Left side: Original Size or Status */}
                                  <span className="flex-shrink-0">{formatBytes(file.originalSize)}</span>
-
-                                 {/* Middle: Arrow or Status Icon */}
                                  <div className="flex-grow flex justify-center items-center px-1">
                                     {isDone && <ArrowRight className={cn("h-3 w-3", sizeReduced ? "text-green-500" : sizeIncreased ? "text-red-500" : "text-gray-400")} />}
                                     {file.status === 'error' && (<FileWarning className="h-3 w-3 text-red-500" />)}
                                     {(file.status === 'compressing' || file.status === 'loading_dims') && (<Loader2 className="h-3 w-3 animate-spin text-blue-500" />)}
                                     {file.status === 'pending' && (<span className="text-xs text-gray-500">...</span>)}
                                  </div>
-
-                                 {/* Right side: Compressed Size or Status Text */}
                                  <span className={cn(
                                      "flex-shrink-0 font-semibold",
                                      isDone && sizeReduced && "text-green-600",
                                      isDone && sizeIncreased && "text-red-600",
                                      isDone && !sizeReduced && !sizeIncreased && "text-gray-500",
                                      file.status === 'error' && "text-red-600",
-                                     (file.status === 'compressing' || file.status === 'loading_dims' || file.status === 'pending') && "text-transparent" // Hide text placeholder during processing
+                                     (file.status === 'compressing' || file.status === 'loading_dims' || file.status === 'pending') && "text-transparent"
                                  )}>
                                      {isDone ? formatBytes(file.compressedSize) : file.status === 'error' ? 'Error' : '...'}
                                  </span>
@@ -344,8 +363,9 @@ const Index: React.FC = () => {
         </CardContent>
         <CardFooter className="flex flex-col items-center justify-center pt-6 border-t space-y-2">
            {totalFiles > 0 && (<p className="text-sm text-muted-foreground">{completedFiles} completed, {errorFiles} errors.</p>)}
-          <Button onClick={handleDownloadZip} disabled={!canDownload}>
-            <Download className="mr-2 h-4 w-4" /> Download {completedFiles > 0 ? `${completedFiles} File(s)` : 'Files'} as ZIP
+          {/* Updated Button */}
+          <Button onClick={handleDownloadAll} disabled={!canDownload}>
+            <Download className="mr-2 h-4 w-4" /> Download {completedFiles > 0 ? `${completedFiles} File(s)` : 'Files'}
           </Button>
         </CardFooter>
       </Card>
@@ -354,7 +374,7 @@ const Index: React.FC = () => {
         <Terminal className="h-4 w-4" />
         <AlertTitle>How it works</AlertTitle>
         <AlertDescription>
-          Upload multiple images. Use the global settings to control compression. Download all successfully compressed images as a ZIP file. All processing happens in your browser.
+          Upload multiple images. Use the global settings to control compression. Download all successfully compressed images individually. All processing happens in your browser. {/* Updated description */}
         </AlertDescription>
       </Alert>
     </div>
