@@ -80,8 +80,6 @@ const Index: React.FC = () => {
   // --- State ---
   const [imageFiles, setImageFiles] = useState<ImageFileState[]>([]);
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
-  // Removed confetti state
-  // const [showConfetti, setShowConfetti] = useState<boolean>(false);
 
   // Settings State
   const [jpegQuality, setJpegQuality] = useState<number>(0.7);
@@ -91,9 +89,6 @@ const Index: React.FC = () => {
 
   // Refs
   const objectUrlRefs = useRef<Record<string, { original: string | null, compressed: string | null }>>({});
-
-  // Removed useWindowSize hook
-  // const { width, height } = useWindowSize();
 
   // --- Core Logic ---
   const updateFileState = (id: string, updates: Partial<ImageFileState>) => {
@@ -207,10 +202,6 @@ const Index: React.FC = () => {
       return;
     }
 
-    // Removed confetti trigger
-    // setShowConfetti(true);
-    // setTimeout(() => setShowConfetti(false), 5000);
-
     console.log(`Downloading ${filesToDownload.length} files individually...`);
     let totalOriginalSize = 0;
     let totalCompressedSize = 0;
@@ -234,7 +225,6 @@ const Index: React.FC = () => {
     const isReduction = reductionPercent > 0;
     const isIncrease = reductionPercent < 0;
 
-    // Custom Toast Content (kept)
     const ToastContent = () => (
         <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
@@ -308,10 +298,10 @@ const Index: React.FC = () => {
   const pngFileTypeInfo = getFileTypeInfo('image/png');
 
   return (
-    // Removed relative positioning from outer div
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6 pb-24">
+       {/* Comment moved inside the main div */}
+       {/* Removed relative positioning from outer div */}
        {/* Removed Confetti component */}
-       {/* {showConfetti && <Confetti width={width} height={height} recycle={false} numberOfPieces={300} />} */}
 
          <Card className="w-full max-w-4xl">
            <CardHeader>
