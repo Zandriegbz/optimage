@@ -58,17 +58,6 @@ const getImageDimensions = (fileUrl: string): Promise<{ width: number; height: n
   });
 };
 
-// Debounce function - still useful for potential future use or rapid switch toggles
-const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) => {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  return (...args: Parameters<F>): Promise<ReturnType<F>> => {
-    return new Promise((resolve) => {
-      if (timeoutId) clearTimeout(timeoutId);
-      timeoutId = setTimeout(() => resolve(func(...args)), waitFor);
-    });
-  };
-};
-
 // Function to get file type label AND color classes
 const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: string; controlClassName: string; tabTriggerClassName: string } => {
    const subtype = mimeType?.split('/')[1] || 'unknown';
@@ -144,18 +133,6 @@ const Index: React.FC = () => {
     }
   };
 
-  // Renamed and kept useCallback for potential future dependency additions
-  const triggerReprocessing = useCallback(() => {
-      const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
-      if (applicableFiles.length > 0 && !isProcessing) {
-          console.log("Settings committed, reprocessing applicable files...");
-          processFiles(applicableFiles);
-      } else if (isProcessing) {
-          console.log("Settings committed, but processing is ongoing. Skipping reprocess.");
-      }
-  }, [imageFiles, isProcessing, processFiles]); // Added processFiles dependency
-
-
   const processFiles = useCallback(async (filesToProcess: ImageFileState[]) => {
     if (filesToProcess.length === 0 || isProcessing) return;
     console.log(`Processing ${filesToProcess.length} files...`);
@@ -184,8 +161,21 @@ const Index: React.FC = () => {
     setIsProcessing(false);
   }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]); // isProcessing added
 
-  // Removed debounced version as it's no longer needed for sliders
-  // const debouncedProcessAllFiles = useCallback(debounce(() => { ... }, 500), [imageFiles, processFiles, isProcessing]);
+
+  // This function triggers the actual reprocessing
+  const triggerReprocessing = useCallback(() => {
+      const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
+      if (applicableFiles.length > 0 && !isProcessing) {
+          console.log("Settings committed, reprocessing applicable files...");
+          // Directly call processFiles here, it will use the latest state values
+          // due to being captured in this callback's closure scope.
+          processFiles(applicableFiles);
+      } else if (isProcessing) {
+          console.log("Settings committed, but processing is ongoing. Skipping reprocess.");
+      }
+  // We only need imageFiles and isProcessing here, as processFiles is stable due to its own useCallback
+  }, [imageFiles, isProcessing, processFiles]);
+
 
   const handleImageUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files; if (!files || files.length === 0) return;
@@ -210,11 +200,10 @@ const Index: React.FC = () => {
   const handleQualityChange = (value: number[]) => { setJpegQuality(value[0]); };
   const handlePngDimensionChange = (value: number[]) => { setPngMaxDimension(value[0]); };
 
-  // Switch handler triggers immediate reprocessing (or could be debounced if needed)
+  // Switch handler triggers immediate reprocessing
   const handleResizingChangeLossy = (checked: boolean) => {
     setEnableResizingLossy(checked);
-    // Trigger reprocessing immediately for switch change
-    triggerReprocessing();
+    triggerReprocessing(); // Use the common trigger function
   };
 
 
