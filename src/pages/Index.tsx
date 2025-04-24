@@ -223,7 +223,6 @@ const Index: React.FC = () => {
     const isReduction = reductionPercent > 0;
     const isIncrease = reductionPercent < 0;
 
-    // Updated Toast Content with more color
     const ToastContent = () => (
         <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
@@ -233,15 +232,15 @@ const Index: React.FC = () => {
             <p className="text-sm text-muted-foreground">
                 {filesToDownload.length} file(s): {formatBytes(totalOriginalSize)}
                 <ArrowRight className="inline h-3 w-3 mx-1 text-gray-400" />
-                <strong className={cn( // Use strong tag and apply color
+                <strong className={cn(
                     isReduction && "text-green-600",
                     isIncrease && "text-red-600"
                 )}>
                     {formatBytes(totalCompressedSize)}
                 </strong>
                 {reductionPercent !== 0 && (
-                    <span className={cn( // Apply color to percentage too
-                        "ml-1 font-medium", // Make percentage slightly bolder
+                    <span className={cn(
+                        "ml-1 font-medium",
                         isReduction && "text-green-600",
                         isIncrease && "text-red-600"
                     )}>
