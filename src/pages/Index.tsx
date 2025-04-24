@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive, ArrowRight } from "lucide-react";
+import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive, ArrowRight, RotateCcw, PartyPopper } from "lucide-react"; // Added RotateCcw, PartyPopper
 import imageCompression from 'browser-image-compression';
 import { saveAs } from 'file-saver'; // Keep file-saver
 import { Slider } from "@/components/ui/slider";
@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { toast } from "sonner"; // Import Sonner toast
 
 // --- Constants ---
 const DEFAULT_MAX_DIMENSION = 1920;
@@ -85,10 +86,7 @@ const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: str
 const Index: React.FC = () => {
   // --- State ---
   const [imageFiles, setImageFiles] = useState<ImageFileState[]>([]);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false); // Global processing flag
-  // Remove ZIP state
-  // const [zipProgress, setZipProgress] = useState<number>(0);
-  // const [isZipping, setIsZipping] = useState<boolean>(false);
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
 
   // Settings State
   const [jpegQuality, setJpegQuality] = useState<number>(0.7);
@@ -209,27 +207,73 @@ const Index: React.FC = () => {
   };
   const handlePngDimensionChange = (value: number[]) => { setPngMaxDimension(value[0]); debouncedProcessAllFiles(); };
 
-  // New function to download all completed files individually
+  // Updated function to download all completed files individually and show summary
   const handleDownloadAll = () => {
     const filesToDownload = imageFiles.filter(f => f.status === 'done' && f.compressedFile);
     if (filesToDownload.length === 0) {
-      alert("No successfully compressed files to download.");
+      toast.error("No successfully compressed files to download.");
       return;
     }
 
     console.log(`Downloading ${filesToDownload.length} files individually...`);
+    let totalOriginalSize = 0;
+    let totalCompressedSize = 0;
+
     filesToDownload.forEach((fileState, index) => {
+      totalOriginalSize += fileState.originalSize;
+      totalCompressedSize += fileState.compressedSize!; // Not null checked by filter
+
       // Add a small delay between downloads to prevent browser blocking popups
       setTimeout(() => {
         try {
           saveAs(fileState.compressedFile!, `compressed_${fileState.originalFile.name}`);
         } catch (err) {
           console.error(`Error downloading ${fileState.originalFile.name}:`, err);
-          // Optionally show an error message to the user for this specific file
+          toast.error(`Failed to download ${fileState.originalFile.name}`);
         }
       }, index * 300); // 300ms delay between each download start
     });
+
+    // Show summary toast after initiating downloads
+    const reduction = totalOriginalSize - totalCompressedSize;
+    const reductionPercent = totalOriginalSize > 0 ? (reduction / totalOriginalSize) * 100 : 0;
+    let summaryMessage = `Initiated download for ${filesToDownload.length} file(s). `;
+    summaryMessage += `Total size reduced from ${formatBytes(totalOriginalSize)} to ${formatBytes(totalCompressedSize)}`;
+    if (reductionPercent !== 0) {
+        summaryMessage += ` (${reductionPercent > 0 ? 'saved' : 'increased'} ${Math.abs(reductionPercent).toFixed(1)}%).`;
+    } else {
+        summaryMessage += "."
+    }
+
+
+    toast.success(summaryMessage, {
+        icon: <PartyPopper className="h-4 w-4" />,
+        duration: 8000, // Keep toast longer
+    });
   };
+
+  // Function to reset the application state
+  const handleReset = () => {
+      console.log("Resetting application state...");
+      // Revoke all object URLs
+      Object.values(objectUrlRefs.current).forEach(({ original, compressed }) => {
+          if (original) URL.revokeObjectURL(original);
+          if (compressed) URL.revokeObjectURL(compressed);
+      });
+      objectUrlRefs.current = {}; // Clear refs
+
+      // Clear the file state
+      setImageFiles([]);
+
+      // Optionally reset settings here if desired
+      // setJpegQuality(0.7);
+      // setEnableResizingLossy(false);
+      // setPngMaxDimension(DEFAULT_MAX_DIMENSION);
+      // setMaxSizeTarget(1);
+
+      toast.info("Ready for new images!");
+  };
+
 
   useEffect(() => {
     return () => {
@@ -249,7 +293,8 @@ const Index: React.FC = () => {
   const completedFiles = imageFiles.filter(f => f.status === 'done').length;
   const errorFiles = imageFiles.filter(f => f.status === 'error').length;
   const processingFilesCount = imageFiles.filter(f => f.status === 'compressing' || f.status === 'loading_dims').length;
-  const canDownload = completedFiles > 0 && !isProcessing; // Removed isZipping check
+  const canDownload = completedFiles > 0 && !isProcessing;
+  const canReset = totalFiles > 0 && !isProcessing; // Can reset if there are files and not processing
 
   // Get color classes for controls/tabs
   const lossyFileTypeInfo = getFileTypeInfo('image/jpeg');
@@ -260,7 +305,7 @@ const Index: React.FC = () => {
       <Card className="w-full max-w-4xl">
         <CardHeader>
           <CardTitle>Bulk Image Optimizer</CardTitle>
-          <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download individually.</CardDescription> {/* Updated description */}
+          <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download individually.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Input */}
@@ -303,8 +348,6 @@ const Index: React.FC = () => {
 
           {/* Status Indicators */}
           {isProcessing && ( <div className="flex items-center justify-center space-x-2 pt-4 text-blue-600"><Loader2 className="h-5 w-5 animate-spin" /><span>Processing {processingFilesCount} of {totalFiles}...</span></div> )}
-          {/* Removed Zipping indicator */}
-          {/* {isZipping && ( <div className="flex flex-col items-center justify-center space-y-2 pt-4 text-green-600"><FileArchive className="h-5 w-5 animate-pulse" /><span>Creating ZIP...</span><Progress value={zipProgress} className="w-1/2 h-2" /></div> )} */}
 
           {/* Image List */}
           {totalFiles > 0 && (
@@ -361,12 +404,18 @@ const Index: React.FC = () => {
             </div>
           )}
         </CardContent>
-        <CardFooter className="flex flex-col items-center justify-center pt-6 border-t space-y-2">
+        <CardFooter className="flex flex-col items-center justify-center pt-6 border-t space-y-4"> {/* Increased spacing */}
            {totalFiles > 0 && (<p className="text-sm text-muted-foreground">{completedFiles} completed, {errorFiles} errors.</p>)}
-          {/* Updated Button */}
-          <Button onClick={handleDownloadAll} disabled={!canDownload}>
-            <Download className="mr-2 h-4 w-4" /> Download {completedFiles > 0 ? `${completedFiles} File(s)` : 'Files'}
-          </Button>
+           {/* Action Buttons */}
+           <div className="flex flex-wrap justify-center gap-4">
+              <Button onClick={handleDownloadAll} disabled={!canDownload}>
+                <Download className="mr-2 h-4 w-4" /> Download {completedFiles > 0 ? `${completedFiles} File(s)` : 'Files'}
+              </Button>
+              {/* Add Reset Button */}
+              <Button variant="outline" onClick={handleReset} disabled={!canReset}>
+                 <RotateCcw className="mr-2 h-4 w-4" /> Start Again
+              </Button>
+           </div>
         </CardFooter>
       </Card>
 
@@ -374,7 +423,7 @@ const Index: React.FC = () => {
         <Terminal className="h-4 w-4" />
         <AlertTitle>How it works</AlertTitle>
         <AlertDescription>
-          Upload multiple images. Use the global settings to control compression. Download all successfully compressed images individually. All processing happens in your browser. {/* Updated description */}
+          Upload multiple images. Use the global settings to control compression. Download all successfully compressed images individually. All processing happens in your browser.
         </AlertDescription>
       </Alert>
     </div>
