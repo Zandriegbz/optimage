@@ -112,11 +112,11 @@ const Index: React.FC = () => {
       }
 
       const activeOptions = Object.entries(options).reduce((acc, [key, value]) => { if (value !== undefined) acc[key] = value; return acc; }, {} as imageCompression.Options);
-      console.log(`Compressing ${originalFile.name} (${id}) with options:`, activeOptions);
-      const startTime = performance.now();
+      // console.log(`Compressing ${originalFile.name} (${id}) with options:`, activeOptions);
+      // const startTime = performance.now();
       const compressedFile = await imageCompression(originalFile, activeOptions);
-      const endTime = performance.now();
-      console.log(`Compression took ${(endTime - startTime).toFixed(2)} ms for ${id}`);
+      // const endTime = performance.now();
+      // console.log(`Compression took ${(endTime - startTime).toFixed(2)} ms for ${id}`);
 
 
       if (objectUrlRefs.current[id]?.compressed) URL.revokeObjectURL(objectUrlRefs.current[id].compressed!);
@@ -124,7 +124,7 @@ const Index: React.FC = () => {
       objectUrlRefs.current[id] = { ...objectUrlRefs.current[id], compressed: compressedObjectUrl };
 
       const compDims = await getImageDimensions(compressedObjectUrl);
-      console.log(`Compressed ${originalFile.name} (${id}): Size: ${compressedFile.size / 1024} KB, Type: ${compressedFile.type}, Dims: ${compDims.width}x${compDims.height}`);
+      // console.log(`Compressed ${originalFile.name} (${id}): Size: ${compressedFile.size / 1024} KB, Type: ${compressedFile.type}, Dims: ${compDims.width}x${compDims.height}`);
 
       return { compressedFile, compressedImageUrl: compressedObjectUrl, compressedSize: compressedFile.size, compressedType: compressedFile.type, compressedDimensions: compDims, status: 'done', error: null };
     } catch (err) {
@@ -136,17 +136,26 @@ const Index: React.FC = () => {
   const processFiles = useCallback(async (filesToProcess: ImageFileState[]) => {
     if (filesToProcess.length === 0 || isProcessing) return;
     console.log(`Processing ${filesToProcess.length} files...`);
-    setIsProcessing(true);
+    setIsProcessing(true); // Set global processing flag
 
     const promises = filesToProcess.map(async (fileState) => {
+      // Don't re-process files already done or in error unless forced
+      if (fileState.status === 'done' || fileState.status === 'error') {
+          // If we need to reprocess 'done' files (e.g., settings changed),
+          // we'd need slightly different logic here or in triggerReprocessing.
+          // For now, assume processFiles is called for new files or explicit reprocessing.
+          // If it's a new file, it will be 'pending'.
+          if (fileState.status !== 'pending') return;
+      }
+
       let currentDims = fileState.originalDimensions;
       if (!currentDims) {
         try {
-          console.log(`Loading dimensions for ${fileState.id}`);
+          // console.log(`Loading dimensions for ${fileState.id}`);
           updateFileState(fileState.id, { status: 'loading_dims' });
           currentDims = await getImageDimensions(fileState.originalImageUrl);
           updateFileState(fileState.id, { originalDimensions: currentDims });
-          console.log(`Dimensions loaded for ${fileState.id}: ${currentDims.width}x${currentDims.height}`);
+          // console.log(`Dimensions loaded for ${fileState.id}: ${currentDims.width}x${currentDims.height}`);
         } catch (dimError) {
           console.error(`Dimension loading error for ${fileState.originalFile.name} (${fileState.id}):`, dimError);
           updateFileState(fileState.id, { status: 'error', error: 'Failed to load image dimensions.' }); return;
@@ -158,22 +167,20 @@ const Index: React.FC = () => {
 
     await Promise.allSettled(promises);
     console.log(`Finished processing batch.`);
-    setIsProcessing(false);
+    setIsProcessing(false); // Clear global processing flag
   }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]); // isProcessing added
 
 
   // This function triggers the actual reprocessing
   const triggerReprocessing = useCallback(() => {
+      // Reprocess files that are 'done' or 'pending' (new files might be pending)
       const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
       if (applicableFiles.length > 0 && !isProcessing) {
           console.log("Settings committed, reprocessing applicable files...");
-          // Directly call processFiles here, it will use the latest state values
-          // due to being captured in this callback's closure scope.
           processFiles(applicableFiles);
       } else if (isProcessing) {
           console.log("Settings committed, but processing is ongoing. Skipping reprocess.");
       }
-  // We only need imageFiles and isProcessing here, as processFiles is stable due to its own useCallback
   }, [imageFiles, isProcessing, processFiles]);
 
 
@@ -190,11 +197,12 @@ const Index: React.FC = () => {
     });
 
     if (newImageFiles.length === 0) { event.target.value = ''; return; }
+    // Append new files, existing ones remain
     setImageFiles(current => [...current, ...newImageFiles]);
-    await new Promise(resolve => setTimeout(resolve, 0));
-    await processFiles(newImageFiles);
+    await new Promise(resolve => setTimeout(resolve, 0)); // Allow state to update
+    await processFiles(newImageFiles); // Process only the newly added files
     event.target.value = '';
-  }, [processFiles]);
+  }, [processFiles]); // processFiles dependency is correct
 
   // Slider handlers now only update state for visual feedback
   const handleQualityChange = (value: number[]) => { setJpegQuality(value[0]); };
@@ -277,9 +285,12 @@ const Index: React.FC = () => {
   const totalFiles = imageFiles.length;
   const completedFiles = imageFiles.filter(f => f.status === 'done').length;
   const errorFiles = imageFiles.filter(f => f.status === 'error').length;
+  // Calculate processing count based on state, not just global flag
   const processingFilesCount = imageFiles.filter(f => f.status === 'compressing' || f.status === 'loading_dims').length;
-  const canDownload = completedFiles > 0 && !isProcessing;
-  const canReset = totalFiles > 0 && !isProcessing;
+  const isActuallyProcessing = processingFilesCount > 0; // More accurate check
+
+  const canDownload = completedFiles > 0 && !isActuallyProcessing;
+  const canReset = totalFiles > 0 && !isActuallyProcessing;
 
   const lossyFileTypeInfo = getFileTypeInfo('image/jpeg');
   const pngFileTypeInfo = getFileTypeInfo('image/png');
@@ -295,7 +306,7 @@ const Index: React.FC = () => {
           {/* Input */}
           <div className="grid w-full max-w-md items-center gap-1.5 mx-auto">
             <Label htmlFor="picture" className="text-center">1. Upload Images</Label>
-            <Input id="picture" type="file" accept="image/jpeg, image/png, image/webp" onChange={handleImageUpload} multiple disabled={isProcessing} className="h-12 text-center cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90" />
+            <Input id="picture" type="file" accept="image/jpeg, image/png, image/webp" onChange={handleImageUpload} multiple disabled={isActuallyProcessing} className="h-12 text-center cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90" />
             <p className="text-xs text-muted-foreground text-center">Select one or more files.</p>
           </div>
 
@@ -316,13 +327,13 @@ const Index: React.FC = () => {
                             id="quality-slider"
                             min={0.05} max={1} step={0.05}
                             value={[jpegQuality]}
-                            onValueChange={handleQualityChange} // Updates state/label only
-                            onValueCommit={triggerReprocessing} // Triggers processing on release
-                            disabled={isProcessing}
+                            onValueChange={handleQualityChange}
+                            onValueCommit={triggerReprocessing}
+                            disabled={isActuallyProcessing}
                          />
                       </div>
                       <div className="flex items-center justify-center space-x-2 pt-5 sm:pt-0">
-                         <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isProcessing} />
+                         <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isActuallyProcessing} />
                          <Label htmlFor="resizing-switch-lossy" className={cn(lossyFileTypeInfo.controlClassName)}>Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
                       </div>
                    </div>
@@ -335,70 +346,83 @@ const Index: React.FC = () => {
                       id="dimension-slider-png"
                       min={320} max={MAX_SLIDER_DIMENSION} step={10}
                       value={[pngMaxDimension]}
-                      onValueChange={handlePngDimensionChange} // Updates state/label only
-                      onValueCommit={triggerReprocessing} // Triggers processing on release
-                      disabled={isProcessing}
+                      onValueChange={handlePngDimensionChange}
+                      onValueCommit={triggerReprocessing}
+                      disabled={isActuallyProcessing}
                    />
                 </TabsContent>
               </Tabs>
             </div>
           )}
 
-          {/* Status Indicators */}
-          {isProcessing && ( <div className="flex items-center justify-center space-x-2 pt-4 text-blue-600"><Loader2 className="h-5 w-5 animate-spin" /><span>Processing {processingFilesCount} of {totalFiles}...</span></div> )}
+          {/* Status Indicators - Removed global one */}
+          {/* {isProcessing && ( <div className="flex items-center justify-center space-x-2 pt-4 text-blue-600"><Loader2 className="h-5 w-5 animate-spin" /><span>Processing {processingFilesCount} of {totalFiles}...</span></div> )} */}
 
-          {/* Image List */}
+          {/* Image List Area */}
           {totalFiles > 0 && (
             <div className="border-t pt-6 space-y-4">
                <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Files className="w-5 h-5" /> 3. Files ({totalFiles})</h3>
-               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {imageFiles.map((file) => {
-                     const fileTypeInfo = getFileTypeInfo(file.originalType);
-                     const isDone = file.status === 'done' && file.compressedSize !== null;
-                     const sizeReduced = isDone && file.compressedSize! < file.originalSize;
-                     const sizeIncreased = isDone && file.compressedSize! > file.originalSize;
 
-                     return (
-                        <Card key={file.id} className="relative overflow-hidden group">
-                           <Button variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6 z-10 bg-background/50 hover:bg-destructive hover:text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeImageFile(file.id)} disabled={isProcessing} aria-label="Remove file">
-                              <XCircle className="h-4 w-4" />
-                           </Button>
-                           <CardContent className="p-3 space-y-2">
-                              <div className="flex justify-center items-center h-32 bg-muted rounded-md overflow-hidden">
-                                 <img src={file.compressedImageUrl ?? file.originalImageUrl} alt={file.originalFile.name} className="max-h-full max-w-full object-contain" />
-                              </div>
-                              <div className="flex items-center justify-between gap-2">
-                                 <p className="text-xs font-medium truncate flex-1" title={file.originalFile.name}>{file.originalFile.name}</p>
-                                 <Badge variant="outline" className={cn("text-xs px-1.5 py-0.5 border", fileTypeInfo.badgeClassName)}>
-                                    {fileTypeInfo.label}
-                                 </Badge>
-                              </div>
-                              {/* Size and Status Row */}
-                              <div className="text-xs text-muted-foreground flex justify-between items-center">
-                                 <span className="flex-shrink-0">{formatBytes(file.originalSize)}</span>
-                                 <div className="flex-grow flex justify-center items-center px-1">
-                                    {isDone && <ArrowRight className={cn("h-3 w-3", sizeReduced ? "text-green-500" : sizeIncreased ? "text-red-500" : "text-gray-400")} />}
-                                    {file.status === 'error' && (<FileWarning className="h-3 w-3 text-red-500" />)}
-                                    {(file.status === 'compressing' || file.status === 'loading_dims') && (<Loader2 className="h-3 w-3 animate-spin text-blue-500" />)}
-                                    {file.status === 'pending' && (<span className="text-xs text-gray-500">...</span>)}
+               {/* Conditional Rendering: Loading Indicator or File Grid */}
+               {isActuallyProcessing ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                     <Loader2 className="h-12 w-12 animate-spin text-blue-500 mb-4" />
+                     <p className="text-lg font-medium">Processing Images...</p>
+                     <p>Please wait, this may take a moment.</p>
+                  </div>
+               ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                     {imageFiles.map((file) => {
+                        const fileTypeInfo = getFileTypeInfo(file.originalType);
+                        const isDone = file.status === 'done' && file.compressedSize !== null;
+                        const sizeReduced = isDone && file.compressedSize! < file.originalSize;
+                        const sizeIncreased = isDone && file.compressedSize! > file.originalSize;
+
+                        return (
+                           <Card key={file.id} className="relative overflow-hidden group">
+                              <Button variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6 z-10 bg-background/50 hover:bg-destructive hover:text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeImageFile(file.id)} disabled={isActuallyProcessing} aria-label="Remove file">
+                                 <XCircle className="h-4 w-4" />
+                              </Button>
+                              <CardContent className="p-3 space-y-2">
+                                 <div className="flex justify-center items-center h-32 bg-muted rounded-md overflow-hidden">
+                                    <img src={file.compressedImageUrl ?? file.originalImageUrl} alt={file.originalFile.name} className="max-h-full max-w-full object-contain" />
                                  </div>
-                                 <span className={cn(
-                                     "flex-shrink-0 font-semibold",
-                                     isDone && sizeReduced && "text-green-600",
-                                     isDone && sizeIncreased && "text-red-600",
-                                     isDone && !sizeReduced && !sizeIncreased && "text-gray-500",
-                                     file.status === 'error' && "text-red-600",
-                                     (file.status === 'compressing' || file.status === 'loading_dims' || file.status === 'pending') && "text-transparent"
-                                 )}>
-                                     {isDone ? formatBytes(file.compressedSize) : file.status === 'error' ? 'Error' : '...'}
-                                 </span>
-                              </div>
-                              {file.status === 'error' && file.error && (<p className="text-xs text-red-600 truncate" title={file.error}>{file.error}</p>)}
-                           </CardContent>
-                        </Card>
-                     );
-                  })}
-               </div>
+                                 <div className="flex items-center justify-between gap-2">
+                                    <p className="text-xs font-medium truncate flex-1" title={file.originalFile.name}>{file.originalFile.name}</p>
+                                    <Badge variant="outline" className={cn("text-xs px-1.5 py-0.5 border", fileTypeInfo.badgeClassName)}>
+                                       {fileTypeInfo.label}
+                                    </Badge>
+                                 </div>
+                                 {/* Size and Status Row */}
+                                 <div className="text-xs text-muted-foreground flex justify-between items-center">
+                                    <span className="flex-shrink-0">{formatBytes(file.originalSize)}</span>
+                                    <div className="flex-grow flex justify-center items-center px-1">
+                                       {isDone && <ArrowRight className={cn("h-3 w-3", sizeReduced ? "text-green-500" : sizeIncreased ? "text-red-500" : "text-gray-400")} />}
+                                       {file.status === 'error' && (<FileWarning className="h-3 w-3 text-red-500" />)}
+                                       {/* Individual loaders are removed as the whole section is replaced */}
+                                       {/* {(file.status === 'compressing' || file.status === 'loading_dims') && (<Loader2 className="h-3 w-3 animate-spin text-blue-500" />)} */}
+                                       {file.status === 'pending' && (<span className="text-xs text-gray-500">...</span>)}
+                                    </div>
+                                    <span className={cn(
+                                        "flex-shrink-0 font-semibold",
+                                        isDone && sizeReduced && "text-green-600",
+                                        isDone && sizeIncreased && "text-red-600",
+                                        isDone && !sizeReduced && !sizeIncreased && "text-gray-500",
+                                        file.status === 'error' && "text-red-600",
+                                        // Show placeholder text if pending, hide if loading/compressing
+                                        (file.status === 'compressing' || file.status === 'loading_dims') && "text-transparent",
+                                        (file.status === 'pending') && "text-gray-500"
+                                    )}>
+                                        {isDone ? formatBytes(file.compressedSize) : file.status === 'error' ? 'Error' : '...'}
+                                    </span>
+                                 </div>
+                                 {file.status === 'error' && file.error && (<p className="text-xs text-red-600 truncate" title={file.error}>{file.error}</p>)}
+                              </CardContent>
+                           </Card>
+                        );
+                     })}
+                  </div>
+               )}
             </div>
           )}
         </CardContent>
@@ -408,7 +432,6 @@ const Index: React.FC = () => {
               <Button onClick={handleDownloadAll} disabled={!canDownload}>
                 <Download className="mr-2 h-4 w-4" /> Download {completedFiles > 0 ? `${completedFiles} File(s)` : 'Files'}
               </Button>
-              {/* Updated Reset Button */}
               <Button variant="outline" onClick={handleReset} disabled={!canReset}>
                  <RotateCcw className="mr-2 h-4 w-4" /> Reset
               </Button>
