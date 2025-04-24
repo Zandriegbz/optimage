@@ -17,9 +17,6 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
-// Confetti removed due to install error
-// import Confetti from 'react-confetti';
-// import useWindowSize from '@/hooks/useWindowSize';
 
 // --- Constants ---
 const DEFAULT_MAX_DIMENSION = 1920;
@@ -115,13 +112,19 @@ const Index: React.FC = () => {
       }
 
       const activeOptions = Object.entries(options).reduce((acc, [key, value]) => { if (value !== undefined) acc[key] = value; return acc; }, {} as imageCompression.Options);
+      // console.log(`Compressing ${originalFile.name} (${id}) with options:`, activeOptions);
+      // const startTime = performance.now();
       const compressedFile = await imageCompression(originalFile, activeOptions);
+      // const endTime = performance.now();
+      // console.log(`Compression took ${(endTime - startTime).toFixed(2)} ms for ${id}`);
+
 
       if (objectUrlRefs.current[id]?.compressed) URL.revokeObjectURL(objectUrlRefs.current[id].compressed!);
       const compressedObjectUrl = URL.createObjectURL(compressedFile);
       objectUrlRefs.current[id] = { ...objectUrlRefs.current[id], compressed: compressedObjectUrl };
 
       const compDims = await getImageDimensions(compressedObjectUrl);
+      // console.log(`Compressed ${originalFile.name} (${id}): Size: ${compressedFile.size / 1024} KB, Type: ${compressedFile.type}, Dims: ${compDims.width}x${compDims.height}`);
 
       return { compressedFile, compressedImageUrl: compressedObjectUrl, compressedSize: compressedFile.size, compressedType: compressedFile.type, compressedDimensions: compDims, status: 'done', error: null };
     } catch (err) {
@@ -132,17 +135,20 @@ const Index: React.FC = () => {
 
   const processFiles = useCallback(async (filesToProcess: ImageFileState[]) => {
     if (filesToProcess.length === 0 || isProcessing) return;
-    setIsProcessing(true);
+    console.log(`Processing ${filesToProcess.length} files...`);
+    setIsProcessing(true); // Set global processing flag
 
     const promises = filesToProcess.map(async (fileState) => {
-      if (fileState.status === 'error') return;
+      if (fileState.status === 'error') return; // Don't reprocess errors automatically
 
       let currentDims = fileState.originalDimensions;
       if (!currentDims) {
         try {
+          // console.log(`Loading dimensions for ${fileState.id}`);
           updateFileState(fileState.id, { status: 'loading_dims' });
           currentDims = await getImageDimensions(fileState.originalImageUrl);
           updateFileState(fileState.id, { originalDimensions: currentDims });
+          // console.log(`Dimensions loaded for ${fileState.id}: ${currentDims.width}x${currentDims.height}`);
         } catch (dimError) {
           console.error(`Dimension loading error for ${fileState.originalFile.name} (${fileState.id}):`, dimError);
           updateFileState(fileState.id, { status: 'error', error: 'Failed to load image dimensions.' }); return;
@@ -153,17 +159,26 @@ const Index: React.FC = () => {
     });
 
     await Promise.allSettled(promises);
-    setIsProcessing(false);
+    console.log(`Finished processing batch.`);
+    setIsProcessing(false); // Clear global processing flag
+  // processFiles depends on the settings state variables directly now
   }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]);
 
 
+  // This function triggers the actual reprocessing
   const triggerReprocessing = useCallback(() => {
+      // Reprocess files that are 'done' or 'pending'
+      // Error files won't be reprocessed automatically by settings changes
       const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
       if (applicableFiles.length > 0 && !isProcessing) {
+          console.log("Settings committed, reprocessing applicable files...");
+          // processFiles will use the latest settings because it's redefined when settings change
           processFiles(applicableFiles);
       } else if (isProcessing) {
           console.log("Settings committed, but processing is ongoing. Skipping reprocess.");
       }
+  // Now depends on processFiles, which itself depends on the settings.
+  // This ensures triggerReprocessing always calls the latest version of processFiles.
   }, [imageFiles, isProcessing, processFiles]);
 
 
@@ -186,11 +201,14 @@ const Index: React.FC = () => {
     event.target.value = '';
   }, [processFiles]);
 
+  // Slider handlers now only update state for visual feedback
   const handleQualityChange = (value: number[]) => { setJpegQuality(value[0]); };
   const handlePngDimensionChange = (value: number[]) => { setPngMaxDimension(value[0]); };
 
+  // Switch handler triggers immediate reprocessing
   const handleResizingChangeLossy = (checked: boolean) => {
     setEnableResizingLossy(checked);
+    // Use triggerReprocessing which calls the latest processFiles
     triggerReprocessing();
   };
 
@@ -222,39 +240,16 @@ const Index: React.FC = () => {
 
     const reduction = totalOriginalSize - totalCompressedSize;
     const reductionPercent = totalOriginalSize > 0 ? (reduction / totalOriginalSize) * 100 : 0;
-    const isReduction = reductionPercent > 0;
-    const isIncrease = reductionPercent < 0;
+    let summaryMessage = `Initiated download for ${filesToDownload.length} file(s). `;
+    summaryMessage += `Total size reduced from ${formatBytes(totalOriginalSize)} to ${formatBytes(totalCompressedSize)}`;
+    if (reductionPercent !== 0) {
+        summaryMessage += ` (${reductionPercent > 0 ? 'saved' : 'increased'} ${Math.abs(reductionPercent).toFixed(1)}%).`;
+    } else {
+        summaryMessage += "."
+    }
 
-    const ToastContent = () => (
-        <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-                <PartyPopper className="h-5 w-5 text-yellow-500" />
-                <span className="font-semibold">Downloads Started!</span>
-            </div>
-            <p className="text-sm text-muted-foreground">
-                {filesToDownload.length} file(s): {formatBytes(totalOriginalSize)}
-                <ArrowRight className="inline h-3 w-3 mx-1 text-gray-400" />
-                <span className={cn(
-                    "font-bold",
-                    isReduction && "text-green-600",
-                    isIncrease && "text-red-600"
-                )}>
-                    {formatBytes(totalCompressedSize)}
-                </span>
-                {reductionPercent !== 0 && (
-                    <span className={cn(
-                        "ml-1",
-                        isReduction && "text-green-600",
-                        isIncrease && "text-red-600"
-                    )}>
-                        ({isReduction ? 'saved' : 'increased'} {Math.abs(reductionPercent).toFixed(1)}%)
-                    </span>
-                )}
-            </p>
-        </div>
-    );
-
-    toast.custom(() => <ToastContent />, {
+    toast.success(summaryMessage, {
+        icon: <PartyPopper className="h-4 w-4" />,
         duration: 8000,
     });
   };
@@ -298,153 +293,148 @@ const Index: React.FC = () => {
   const pngFileTypeInfo = getFileTypeInfo('image/png');
 
   return (
-    <div className="container mx-auto p-4 flex flex-col items-center space-y-6 pb-24">
-       {/* Comment moved inside the main div */}
-       {/* Removed relative positioning from outer div */}
-       {/* Removed Confetti component */}
+    <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
+      <Card className="w-full max-w-4xl">
+        <CardHeader>
+          <CardTitle>Bulk Image Optimizer</CardTitle>
+          <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download individually.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Input */}
+          <div className="grid w-full max-w-md items-center gap-1.5 mx-auto">
+            <Label htmlFor="picture" className="text-center">1. Upload Images</Label>
+            <Input id="picture" type="file" accept="image/jpeg, image/png, image/webp" onChange={handleImageUpload} multiple disabled={isActuallyProcessing} className="h-12 text-center cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90" />
+            <p className="text-xs text-muted-foreground text-center">Select one or more files.</p>
+          </div>
 
-         <Card className="w-full max-w-4xl">
-           <CardHeader>
-             <CardTitle>Bulk Image Optimizer</CardTitle>
-             <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download individually.</CardDescription>
-           </CardHeader>
-           <CardContent className="space-y-6">
-             {/* Input */}
-             <div className="grid w-full max-w-md items-center gap-1.5 mx-auto">
-               <Label htmlFor="picture" className="text-center">1. Upload Images</Label>
-               <Input id="picture" type="file" accept="image/jpeg, image/png, image/webp" onChange={handleImageUpload} multiple disabled={isActuallyProcessing} className="h-12 text-center cursor-pointer file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-primary-foreground hover:file:bg-primary/90" />
-               <p className="text-xs text-muted-foreground text-center">Select one or more files.</p>
-             </div>
-
-             {/* Settings */}
-             {totalFiles > 0 && (
-               <div className="border-t pt-4 space-y-4">
-                 <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Settings2 className="w-5 h-5" /> 2. Global Settings</h3>
-                 <Tabs defaultValue="lossy" className="w-full max-w-xl mx-auto">
-                   <TabsList className="grid w-full grid-cols-2">
-                     <TabsTrigger value="lossy" className={lossyFileTypeInfo.tabTriggerClassName}>JPEG / WEBP</TabsTrigger>
-                     <TabsTrigger value="png" className={pngFileTypeInfo.tabTriggerClassName}>PNG</TabsTrigger>
-                   </TabsList>
-                   <TabsContent value="lossy" className="mt-4 border rounded-md p-4 space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-                         <div className="space-y-2">
-                            <Label htmlFor="quality-slider" className={cn(lossyFileTypeInfo.controlClassName)}>Quality: {Math.round(jpegQuality * 100)}%</Label>
-                            <Slider
-                               id="quality-slider"
-                               min={0.05} max={1} step={0.05}
-                               value={[jpegQuality]}
-                               onValueChange={handleQualityChange}
-                               onValueCommit={triggerReprocessing}
-                               disabled={isActuallyProcessing}
-                            />
-                         </div>
-                         <div className="flex items-center justify-center space-x-2 pt-5 sm:pt-0">
-                            <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isActuallyProcessing} />
-                            <Label htmlFor="resizing-switch-lossy" className={cn(lossyFileTypeInfo.controlClassName)}>Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
-                         </div>
+          {/* Settings */}
+          {totalFiles > 0 && (
+            <div className="border-t pt-4 space-y-4">
+              <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Settings2 className="w-5 h-5" /> 2. Global Settings</h3>
+              <Tabs defaultValue="lossy" className="w-full max-w-xl mx-auto">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="lossy" className={lossyFileTypeInfo.tabTriggerClassName}>JPEG / WEBP</TabsTrigger>
+                  <TabsTrigger value="png" className={pngFileTypeInfo.tabTriggerClassName}>PNG</TabsTrigger>
+                </TabsList>
+                <TabsContent value="lossy" className="mt-4 border rounded-md p-4 space-y-4">
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                      <div className="space-y-2">
+                         <Label htmlFor="quality-slider" className={cn(lossyFileTypeInfo.controlClassName)}>Quality: {Math.round(jpegQuality * 100)}%</Label>
+                         <Slider
+                            id="quality-slider"
+                            min={0.05} max={1} step={0.05}
+                            value={[jpegQuality]}
+                            onValueChange={handleQualityChange} // Updates state/label only
+                            onValueCommit={triggerReprocessing} // Triggers processing on release
+                            disabled={isActuallyProcessing}
+                         />
                       </div>
-                   </TabsContent>
-                   <TabsContent value="png" className="mt-4 border rounded-md p-4 space-y-2">
-                      <Label htmlFor="dimension-slider-png" className={cn("flex items-center gap-1 justify-center", pngFileTypeInfo.controlClassName)}>
-                         <Ruler className="w-4 h-4" /> Max Dimension: {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
-                      </Label>
-                      <Slider
-                         id="dimension-slider-png"
-                         min={320} max={MAX_SLIDER_DIMENSION} step={10}
-                         value={[pngMaxDimension]}
-                         onValueChange={handlePngDimensionChange}
-                         onValueCommit={triggerReprocessing}
-                         disabled={isActuallyProcessing}
-                      />
-                   </TabsContent>
-                 </Tabs>
-               </div>
-             )}
+                      <div className="flex items-center justify-center space-x-2 pt-5 sm:pt-0">
+                         <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isActuallyProcessing} />
+                         <Label htmlFor="resizing-switch-lossy" className={cn(lossyFileTypeInfo.controlClassName)}>Resize if &gt; {DEFAULT_MAX_DIMENSION}px</Label>
+                      </div>
+                   </div>
+                </TabsContent>
+                <TabsContent value="png" className="mt-4 border rounded-md p-4 space-y-2">
+                   <Label htmlFor="dimension-slider-png" className={cn("flex items-center gap-1 justify-center", pngFileTypeInfo.controlClassName)}>
+                      <Ruler className="w-4 h-4" /> Max Dimension: {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
+                   </Label>
+                   <Slider
+                      id="dimension-slider-png"
+                      min={320} max={MAX_SLIDER_DIMENSION} step={10}
+                      value={[pngMaxDimension]}
+                      onValueChange={handlePngDimensionChange} // Updates state/label only
+                      onValueCommit={triggerReprocessing} // Triggers processing on release
+                      disabled={isActuallyProcessing}
+                   />
+                </TabsContent>
+              </Tabs>
+            </div>
+          )}
 
-             {/* Image List Area */}
-             {totalFiles > 0 && (
-               <div className="border-t pt-6 space-y-4">
-                  <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Files className="w-5 h-5" /> 3. Files ({totalFiles})</h3>
-                  {isActuallyProcessing ? (
-                     <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-                        <Loader2 className="h-12 w-12 animate-spin text-blue-500 mb-4" />
-                        <p className="text-lg font-medium">Processing Images...</p>
-                        <p>Please wait, this may take a moment.</p>
-                     </div>
-                  ) : (
-                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {imageFiles.map((file) => {
-                           const fileTypeInfo = getFileTypeInfo(file.originalType);
-                           const isDone = file.status === 'done' && file.compressedSize !== null;
-                           const sizeReduced = isDone && file.compressedSize! < file.originalSize;
-                           const sizeIncreased = isDone && file.compressedSize! > file.originalSize;
+          {/* Image List Area */}
+          {totalFiles > 0 && (
+            <div className="border-t pt-6 space-y-4">
+               <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Files className="w-5 h-5" /> 3. Files ({totalFiles})</h3>
+               {isActuallyProcessing ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+                     <Loader2 className="h-12 w-12 animate-spin text-blue-500 mb-4" />
+                     <p className="text-lg font-medium">Processing Images...</p>
+                     <p>Please wait, this may take a moment.</p>
+                  </div>
+               ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                     {imageFiles.map((file) => {
+                        const fileTypeInfo = getFileTypeInfo(file.originalType);
+                        const isDone = file.status === 'done' && file.compressedSize !== null;
+                        const sizeReduced = isDone && file.compressedSize! < file.originalSize;
+                        const sizeIncreased = isDone && file.compressedSize! > file.originalSize;
 
-                           return (
-                              <Card key={file.id} className="relative overflow-hidden group">
-                                 <Button variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6 z-10 bg-background/50 hover:bg-destructive hover:text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeImageFile(file.id)} disabled={isActuallyProcessing} aria-label="Remove file">
-                                    <XCircle className="h-4 w-4" />
-                                 </Button>
-                                 <CardContent className="p-3 space-y-2">
-                                    <div className="flex justify-center items-center h-32 bg-muted rounded-md overflow-hidden">
-                                       <img src={file.compressedImageUrl ?? file.originalImageUrl} alt={file.originalFile.name} className="max-h-full max-w-full object-contain" />
+                        return (
+                           <Card key={file.id} className="relative overflow-hidden group">
+                              <Button variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6 z-10 bg-background/50 hover:bg-destructive hover:text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity" onClick={() => removeImageFile(file.id)} disabled={isActuallyProcessing} aria-label="Remove file">
+                                 <XCircle className="h-4 w-4" />
+                              </Button>
+                              <CardContent className="p-3 space-y-2">
+                                 <div className="flex justify-center items-center h-32 bg-muted rounded-md overflow-hidden">
+                                    <img src={file.compressedImageUrl ?? file.originalImageUrl} alt={file.originalFile.name} className="max-h-full max-w-full object-contain" />
+                                 </div>
+                                 <div className="flex items-center justify-between gap-2">
+                                    <p className="text-xs font-medium truncate flex-1" title={file.originalFile.name}>{file.originalFile.name}</p>
+                                    <Badge variant="outline" className={cn("text-xs px-1.5 py-0.5 border", fileTypeInfo.badgeClassName)}>
+                                       {fileTypeInfo.label}
+                                    </Badge>
+                                 </div>
+                                 {/* Size and Status Row */}
+                                 <div className="text-xs text-muted-foreground flex justify-between items-center">
+                                    <span className="flex-shrink-0">{formatBytes(file.originalSize)}</span>
+                                    <div className="flex-grow flex justify-center items-center px-1">
+                                       {isDone && <ArrowRight className={cn("h-3 w-3", sizeReduced ? "text-green-500" : sizeIncreased ? "text-red-500" : "text-gray-400")} />}
+                                       {file.status === 'error' && (<FileWarning className="h-3 w-3 text-red-500" />)}
+                                       {file.status === 'pending' && (<span className="text-xs text-gray-500">...</span>)}
                                     </div>
-                                    <div className="flex items-center justify-between gap-2">
-                                       <p className="text-xs font-medium truncate flex-1" title={file.originalFile.name}>{file.originalFile.name}</p>
-                                       <Badge variant="outline" className={cn("text-xs px-1.5 py-0.5 border", fileTypeInfo.badgeClassName)}>
-                                          {fileTypeInfo.label}
-                                       </Badge>
-                                    </div>
-                                    {/* Size and Status Row */}
-                                    <div className="text-xs text-muted-foreground flex justify-between items-center">
-                                       <span className="flex-shrink-0">{formatBytes(file.originalSize)}</span>
-                                       <div className="flex-grow flex justify-center items-center px-1">
-                                          {isDone && <ArrowRight className={cn("h-3 w-3", sizeReduced ? "text-green-500" : sizeIncreased ? "text-red-500" : "text-gray-400")} />}
-                                          {file.status === 'error' && (<FileWarning className="h-3 w-3 text-red-500" />)}
-                                          {file.status === 'pending' && (<span className="text-xs text-gray-500">...</span>)}
-                                       </div>
-                                       <span className={cn(
-                                           "flex-shrink-0 font-semibold",
-                                           isDone && sizeReduced && "text-green-600",
-                                           isDone && sizeIncreased && "text-red-600",
-                                           isDone && !sizeReduced && !sizeIncreased && "text-gray-500",
-                                           file.status === 'error' && "text-red-600",
-                                           (file.status === 'compressing' || file.status === 'loading_dims') && "text-transparent",
-                                           (file.status === 'pending') && "text-gray-500"
-                                       )}>
-                                           {isDone ? formatBytes(file.compressedSize) : file.status === 'error' ? 'Error' : '...'}
-                                       </span>
-                                    </div>
-                                    {file.status === 'error' && file.error && (<p className="text-xs text-red-600 truncate" title={file.error}>{file.error}</p>)}
-                                 </CardContent>
-                              </Card>
-                           );
-                        })}
-                     </div>
-                  )}
-               </div>
-             )}
-           </CardContent>
-           <CardFooter className="flex flex-col items-center justify-center pt-6 border-t space-y-4">
-              {totalFiles > 0 && (<p className="text-sm text-muted-foreground">{completedFiles} completed, {errorFiles} errors.</p>)}
-              <div className="flex flex-wrap justify-center gap-4">
-                 <Button onClick={handleDownloadAll} disabled={!canDownload}>
-                   <Download className="mr-2 h-4 w-4" /> Download {completedFiles > 0 ? `${completedFiles} File(s)` : 'Files'}
-                 </Button>
-                 <Button variant="outline" onClick={handleReset} disabled={!canReset}>
-                    <RotateCcw className="mr-2 h-4 w-4" /> Reset
-                 </Button>
-              </div>
-           </CardFooter>
-         </Card>
+                                    <span className={cn(
+                                        "flex-shrink-0 font-semibold",
+                                        isDone && sizeReduced && "text-green-600",
+                                        isDone && sizeIncreased && "text-red-600",
+                                        isDone && !sizeReduced && !sizeIncreased && "text-gray-500",
+                                        file.status === 'error' && "text-red-600",
+                                        (file.status === 'compressing' || file.status === 'loading_dims') && "text-transparent", // Hide placeholder during processing
+                                        (file.status === 'pending') && "text-gray-500" // Show placeholder if pending
+                                    )}>
+                                        {isDone ? formatBytes(file.compressedSize) : file.status === 'error' ? 'Error' : '...'}
+                                    </span>
+                                 </div>
+                                 {file.status === 'error' && file.error && (<p className="text-xs text-red-600 truncate" title={file.error}>{file.error}</p>)}
+                              </CardContent>
+                           </Card>
+                        );
+                     })}
+                  </div>
+               )}
+            </div>
+          )}
+        </CardContent>
+        <CardFooter className="flex flex-col items-center justify-center pt-6 border-t space-y-4">
+           {totalFiles > 0 && (<p className="text-sm text-muted-foreground">{completedFiles} completed, {errorFiles} errors.</p>)}
+           <div className="flex flex-wrap justify-center gap-4">
+              <Button onClick={handleDownloadAll} disabled={!canDownload}>
+                <Download className="mr-2 h-4 w-4" /> Download {completedFiles > 0 ? `${completedFiles} File(s)` : 'Files'}
+              </Button>
+              <Button variant="outline" onClick={handleReset} disabled={!canReset}>
+                 <RotateCcw className="mr-2 h-4 w-4" /> Reset
+              </Button>
+           </div>
+        </CardFooter>
+      </Card>
 
-          <Alert className="max-w-3xl">
-           <Terminal className="h-4 w-4" />
-           <AlertTitle>How it works</AlertTitle>
-           <AlertDescription>
-             Upload multiple images. Use the global settings to control compression. Download all successfully compressed images individually. All processing happens in your browser.
-           </AlertDescription>
-         </Alert>
-       </div>
+       <Alert className="max-w-3xl">
+        <Terminal className="h-4 w-4" />
+        <AlertTitle>How it works</AlertTitle>
+        <AlertDescription>
+          Upload multiple images. Use the global settings to control compression. Download all successfully compressed images individually. All processing happens in your browser.
+        </AlertDescription>
+      </Alert>
     </div>
   );
 };
