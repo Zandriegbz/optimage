@@ -7,16 +7,16 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive, ArrowRight, RotateCcw, PartyPopper } from "lucide-react"; // Added RotateCcw, PartyPopper
+import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive, ArrowRight, RotateCcw, PartyPopper } from "lucide-react";
 import imageCompression from 'browser-image-compression';
-import { saveAs } from 'file-saver'; // Keep file-saver
+import { saveAs } from 'file-saver';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-// import JSZip from 'jszip'; // Remove JSZip import
+// import JSZip from 'jszip'; // Removed JSZip import
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { toast } from "sonner"; // Import Sonner toast
+import { toast } from "sonner";
 
 // --- Constants ---
 const DEFAULT_MAX_DIMENSION = 1920;
@@ -58,6 +58,7 @@ const getImageDimensions = (fileUrl: string): Promise<{ width: number; height: n
   });
 };
 
+// Debounce function - still useful for potential future use or rapid switch toggles
 const debounce = <F extends (...args: any[]) => any>(func: F, waitFor: number) => {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   return (...args: Parameters<F>): Promise<ReturnType<F>> => {
@@ -143,6 +144,18 @@ const Index: React.FC = () => {
     }
   };
 
+  // Renamed and kept useCallback for potential future dependency additions
+  const triggerReprocessing = useCallback(() => {
+      const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
+      if (applicableFiles.length > 0 && !isProcessing) {
+          console.log("Settings committed, reprocessing applicable files...");
+          processFiles(applicableFiles);
+      } else if (isProcessing) {
+          console.log("Settings committed, but processing is ongoing. Skipping reprocess.");
+      }
+  }, [imageFiles, isProcessing, processFiles]); // Added processFiles dependency
+
+
   const processFiles = useCallback(async (filesToProcess: ImageFileState[]) => {
     if (filesToProcess.length === 0 || isProcessing) return;
     console.log(`Processing ${filesToProcess.length} files...`);
@@ -169,17 +182,10 @@ const Index: React.FC = () => {
     await Promise.allSettled(promises);
     console.log(`Finished processing batch.`);
     setIsProcessing(false);
-  }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]);
+  }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]); // isProcessing added
 
-  const debouncedProcessAllFiles = useCallback(debounce(() => {
-      const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
-      if (applicableFiles.length > 0 && !isProcessing) {
-          console.log("Settings changed, reprocessing applicable files...");
-          processFiles(applicableFiles);
-      } else if (isProcessing) {
-          console.log("Settings changed, but processing is ongoing. Skipping reprocess.");
-      }
-  }, 500), [imageFiles, processFiles, isProcessing]);
+  // Removed debounced version as it's no longer needed for sliders
+  // const debouncedProcessAllFiles = useCallback(debounce(() => { ... }, 500), [imageFiles, processFiles, isProcessing]);
 
   const handleImageUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files; if (!files || files.length === 0) return;
@@ -200,14 +206,18 @@ const Index: React.FC = () => {
     event.target.value = '';
   }, [processFiles]);
 
-  const handleQualityChange = (value: number[]) => { setJpegQuality(value[0]); debouncedProcessAllFiles(); };
+  // Slider handlers now only update state for visual feedback
+  const handleQualityChange = (value: number[]) => { setJpegQuality(value[0]); };
+  const handlePngDimensionChange = (value: number[]) => { setPngMaxDimension(value[0]); };
+
+  // Switch handler triggers immediate reprocessing (or could be debounced if needed)
   const handleResizingChangeLossy = (checked: boolean) => {
     setEnableResizingLossy(checked);
-    debouncedProcessAllFiles();
+    // Trigger reprocessing immediately for switch change
+    triggerReprocessing();
   };
-  const handlePngDimensionChange = (value: number[]) => { setPngMaxDimension(value[0]); debouncedProcessAllFiles(); };
 
-  // Updated function to download all completed files individually and show summary
+
   const handleDownloadAll = () => {
     const filesToDownload = imageFiles.filter(f => f.status === 'done' && f.compressedFile);
     if (filesToDownload.length === 0) {
@@ -221,9 +231,8 @@ const Index: React.FC = () => {
 
     filesToDownload.forEach((fileState, index) => {
       totalOriginalSize += fileState.originalSize;
-      totalCompressedSize += fileState.compressedSize!; // Not null checked by filter
+      totalCompressedSize += fileState.compressedSize!;
 
-      // Add a small delay between downloads to prevent browser blocking popups
       setTimeout(() => {
         try {
           saveAs(fileState.compressedFile!, `compressed_${fileState.originalFile.name}`);
@@ -231,10 +240,9 @@ const Index: React.FC = () => {
           console.error(`Error downloading ${fileState.originalFile.name}:`, err);
           toast.error(`Failed to download ${fileState.originalFile.name}`);
         }
-      }, index * 300); // 300ms delay between each download start
+      }, index * 300);
     });
 
-    // Show summary toast after initiating downloads
     const reduction = totalOriginalSize - totalCompressedSize;
     const reductionPercent = totalOriginalSize > 0 ? (reduction / totalOriginalSize) * 100 : 0;
     let summaryMessage = `Initiated download for ${filesToDownload.length} file(s). `;
@@ -245,32 +253,20 @@ const Index: React.FC = () => {
         summaryMessage += "."
     }
 
-
     toast.success(summaryMessage, {
         icon: <PartyPopper className="h-4 w-4" />,
-        duration: 8000, // Keep toast longer
+        duration: 8000,
     });
   };
 
-  // Function to reset the application state
   const handleReset = () => {
       console.log("Resetting application state...");
-      // Revoke all object URLs
       Object.values(objectUrlRefs.current).forEach(({ original, compressed }) => {
           if (original) URL.revokeObjectURL(original);
           if (compressed) URL.revokeObjectURL(compressed);
       });
-      objectUrlRefs.current = {}; // Clear refs
-
-      // Clear the file state
+      objectUrlRefs.current = {};
       setImageFiles([]);
-
-      // Optionally reset settings here if desired
-      // setJpegQuality(0.7);
-      // setEnableResizingLossy(false);
-      // setPngMaxDimension(DEFAULT_MAX_DIMENSION);
-      // setMaxSizeTarget(1);
-
       toast.info("Ready for new images!");
   };
 
@@ -294,9 +290,8 @@ const Index: React.FC = () => {
   const errorFiles = imageFiles.filter(f => f.status === 'error').length;
   const processingFilesCount = imageFiles.filter(f => f.status === 'compressing' || f.status === 'loading_dims').length;
   const canDownload = completedFiles > 0 && !isProcessing;
-  const canReset = totalFiles > 0 && !isProcessing; // Can reset if there are files and not processing
+  const canReset = totalFiles > 0 && !isProcessing;
 
-  // Get color classes for controls/tabs
   const lossyFileTypeInfo = getFileTypeInfo('image/jpeg');
   const pngFileTypeInfo = getFileTypeInfo('image/png');
 
@@ -328,7 +323,14 @@ const Index: React.FC = () => {
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
                       <div className="space-y-2">
                          <Label htmlFor="quality-slider" className={cn(lossyFileTypeInfo.controlClassName)}>Quality: {Math.round(jpegQuality * 100)}%</Label>
-                         <Slider id="quality-slider" min={0.05} max={1} step={0.05} value={[jpegQuality]} onValueChange={handleQualityChange} disabled={isProcessing} />
+                         <Slider
+                            id="quality-slider"
+                            min={0.05} max={1} step={0.05}
+                            value={[jpegQuality]}
+                            onValueChange={handleQualityChange} // Updates state/label only
+                            onValueCommit={triggerReprocessing} // Triggers processing on release
+                            disabled={isProcessing}
+                         />
                       </div>
                       <div className="flex items-center justify-center space-x-2 pt-5 sm:pt-0">
                          <Switch id="resizing-switch-lossy" checked={enableResizingLossy} onCheckedChange={handleResizingChangeLossy} disabled={isProcessing} />
@@ -340,7 +342,14 @@ const Index: React.FC = () => {
                    <Label htmlFor="dimension-slider-png" className={cn("flex items-center gap-1 justify-center", pngFileTypeInfo.controlClassName)}>
                       <Ruler className="w-4 h-4" /> Max Dimension: {pngMaxDimension < MAX_SLIDER_DIMENSION ? `${pngMaxDimension}px` : 'Original'}
                    </Label>
-                   <Slider id="dimension-slider-png" min={320} max={MAX_SLIDER_DIMENSION} step={10} value={[pngMaxDimension]} onValueChange={handlePngDimensionChange} disabled={isProcessing} />
+                   <Slider
+                      id="dimension-slider-png"
+                      min={320} max={MAX_SLIDER_DIMENSION} step={10}
+                      value={[pngMaxDimension]}
+                      onValueChange={handlePngDimensionChange} // Updates state/label only
+                      onValueCommit={triggerReprocessing} // Triggers processing on release
+                      disabled={isProcessing}
+                   />
                 </TabsContent>
               </Tabs>
             </div>
@@ -404,16 +413,15 @@ const Index: React.FC = () => {
             </div>
           )}
         </CardContent>
-        <CardFooter className="flex flex-col items-center justify-center pt-6 border-t space-y-4"> {/* Increased spacing */}
+        <CardFooter className="flex flex-col items-center justify-center pt-6 border-t space-y-4">
            {totalFiles > 0 && (<p className="text-sm text-muted-foreground">{completedFiles} completed, {errorFiles} errors.</p>)}
-           {/* Action Buttons */}
            <div className="flex flex-wrap justify-center gap-4">
               <Button onClick={handleDownloadAll} disabled={!canDownload}>
                 <Download className="mr-2 h-4 w-4" /> Download {completedFiles > 0 ? `${completedFiles} File(s)` : 'Files'}
               </Button>
-              {/* Add Reset Button */}
+              {/* Updated Reset Button */}
               <Button variant="outline" onClick={handleReset} disabled={!canReset}>
-                 <RotateCcw className="mr-2 h-4 w-4" /> Start Again
+                 <RotateCcw className="mr-2 h-4 w-4" /> Reset
               </Button>
            </div>
         </CardFooter>
