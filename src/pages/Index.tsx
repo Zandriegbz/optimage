@@ -225,7 +225,34 @@ const Index: React.FC = () => {
     const isReduction = reductionPercent > 0;
     const isIncrease = reductionPercent < 0;
 
-    const ToastContent = () => ( /* ... Toast JSX ... */ ); // Keep the colorful toast JSX
+    // Restore the actual JSX for the toast content
+    const ToastContent = () => (
+        <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+                <PartyPopper className="h-5 w-5 text-yellow-500" />
+                <span className="font-semibold">Downloads Started!</span>
+            </div>
+            <p className="text-sm text-muted-foreground">
+                {filesToDownload.length} file(s): {formatBytes(totalOriginalSize)}
+                <ArrowRight className="inline h-3 w-3 mx-1 text-gray-400" />
+                <strong className={cn(
+                    isReduction && "text-green-600",
+                    isIncrease && "text-red-600"
+                )}>
+                    {formatBytes(totalCompressedSize)}
+                </strong>
+                {reductionPercent !== 0 && (
+                    <span className={cn(
+                        "ml-1 font-medium",
+                        isReduction && "text-green-600",
+                        isIncrease && "text-red-600"
+                    )}>
+                        ({isReduction ? 'saved' : 'increased'} {Math.abs(reductionPercent).toFixed(1)}%)
+                    </span>
+                )}
+            </p>
+        </div>
+    );
     toast.custom(() => <ToastContent />, { duration: 8000 });
   };
 
@@ -257,7 +284,7 @@ const Index: React.FC = () => {
   const totalFiles = imageFiles.length;
   const completedFiles = imageFiles.filter(f => f.status === 'done').length;
   const errorFiles = imageFiles.filter(f => f.status === 'error').length;
-  const isActuallyProcessing = isProcessing; // Use the global flag set by processFiles
+  const isActuallyProcessing = isProcessing;
   const canDownload = completedFiles > 0 && !isActuallyProcessing;
   const canReset = totalFiles > 0 && !isActuallyProcessing;
 
