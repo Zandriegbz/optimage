@@ -225,7 +225,6 @@ const Index: React.FC = () => {
     const isReduction = reductionPercent > 0;
     const isIncrease = reductionPercent < 0;
 
-    // Restore the actual JSX for the toast content
     const ToastContent = () => (
         <div className="flex flex-col gap-1">
             <div className="flex items-center gap-2">
@@ -293,6 +292,7 @@ const Index: React.FC = () => {
   const pngFileTypeInfo = getFileTypeInfo('image/png');
 
   // --- Render ---
+  // Carefully check this return statement
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6 pb-24">
          <Card className="w-full max-w-4xl">
