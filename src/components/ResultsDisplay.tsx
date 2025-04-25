@@ -21,7 +21,8 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
   onDownloadAll,
   canDownload
 }) => {
-  if (optimizedImages.length === 0) {
+  // Add check for null/undefined optimizedImages array as well
+  if (!optimizedImages || optimizedImages.length === 0) {
     return null; // Don't render anything if there are no results yet
   }
 
@@ -34,26 +35,34 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
         </CardDescription>
       </CardHeader>
       <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-        {optimizedImages.map((imgData, index) => (
-          <Card key={index}>
-            <CardHeader className="p-2">
-              {/* Ensure previewUrl is valid before rendering */}
-              {imgData.previewUrl ? (
-                 <img src={imgData.previewUrl} alt={`Optimized ${imgData.file.name}`} className="rounded-md object-contain h-32 w-full" />
-              ) : (
-                <div className="rounded-md bg-muted h-32 w-full flex items-center justify-center text-muted-foreground text-sm">
-                  Preview unavailable
-                </div>
-              )}
-            </CardHeader>
-            <CardContent className="p-3 text-xs space-y-1">
-              <p className="font-medium truncate" title={imgData.file.name}>{imgData.file.name}</p>
-              <p>Original: {formatBytes(imgData.originalSize)}</p>
-              <p>Optimized: {formatBytes(imgData.optimizedSize)}</p>
-              <p>Reduction: {(( (imgData.originalSize - imgData.optimizedSize) / imgData.originalSize ) * 100).toFixed(1)}%</p>
-            </CardContent>
-          </Card>
-        ))}
+        {optimizedImages.map((imgData, index) => {
+           // Calculate reduction safely to avoid division by zero
+           const reductionPercent = imgData.originalSize > 0
+             ? (((imgData.originalSize - imgData.optimizedSize) / imgData.originalSize) * 100).toFixed(1)
+             : '0.0';
+
+           return (
+            <Card key={index}>
+              <CardHeader className="p-2">
+                {/* Ensure previewUrl is valid before rendering */}
+                {imgData.previewUrl ? (
+                   <img src={imgData.previewUrl} alt={`Optimized ${imgData.file.name}`} className="rounded-md object-contain h-32 w-full" />
+                ) : (
+                  <div className="rounded-md bg-muted h-32 w-full flex items-center justify-center text-muted-foreground text-sm">
+                    Preview unavailable
+                  </div>
+                )}
+              </CardHeader>
+              <CardContent className="p-3 text-xs space-y-1">
+                <p className="font-medium truncate" title={imgData.file.name}>{imgData.file.name}</p>
+                <p>Original: {formatBytes(imgData.originalSize)}</p>
+                <p>Optimized: {formatBytes(imgData.optimizedSize)}</p>
+                {/* Use the safely calculated percentage */}
+                <p>Reduction: {reductionPercent}%</p>
+              </CardContent>
+            </Card>
+           );
+        })}
       </CardContent>
       <CardFooter className="flex justify-end">
         <Button onClick={onDownloadAll} variant="secondary" disabled={!canDownload}>
