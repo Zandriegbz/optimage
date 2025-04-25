@@ -6,13 +6,7 @@ import { OptimizationControls } from "@/components/OptimizationControls";
 import { ResultsDisplay } from "@/components/ResultsDisplay";
 
 const Index = () => {
-  console.log("Index: Component rendering started."); // Log component start
-
   // Destructure values from the hook
-  const hookValues = useImageOptimizer();
-  console.log("Index: Received values from useImageOptimizer:", hookValues); // Log received values
-
-  // Destructure specific values needed for rendering
   const {
     files,
     optimizedImages,
@@ -30,9 +24,7 @@ const Index = () => {
     totalReduction,
     canOptimize,
     canDownload,
-  } = hookValues;
-
-  console.log("Index: Destructured hook values. isOptimizing:", isOptimizing, "optimizedImages count:", optimizedImages.length); // Log key state
+  } = useImageOptimizer();
 
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
@@ -47,14 +39,12 @@ const Index = () => {
         </CardHeader>
         <CardContent className="space-y-4">
           {/* Image Uploader Component */}
-          {console.log("Index: Rendering ImageUploader...")}
           <ImageUploader
             onFileChange={handleFileChange}
             fileCount={files.length}
             isOptimizing={isOptimizing}
           />
           {/* Optimization Settings Component */}
-          {console.log("Index: Rendering OptimizationSettings...")}
           <OptimizationSettings
             quality={quality}
             setQuality={setQuality}
@@ -64,7 +54,6 @@ const Index = () => {
           />
         </CardContent>
         {/* Optimization Controls (Button & Progress) Component */}
-        {console.log("Index: Rendering OptimizationControls...")}
         <OptimizationControls
           onOptimize={handleOptimize}
           isOptimizing={isOptimizing}
@@ -74,11 +63,8 @@ const Index = () => {
       </Card>
 
       {/* Results Display Component - Render only when not optimizing and results exist */}
-      {console.log("Index: Checking condition for ResultsDisplay:", !isOptimizing && optimizedImages.length > 0)}
       {!isOptimizing && optimizedImages.length > 0 && (
-        <>
-          {console.log("Index: Rendering ResultsDisplay...")}
-          <ResultsDisplay
+         <ResultsDisplay
             optimizedImages={optimizedImages}
             totalOriginalSize={totalOriginalSize}
             totalOptimizedSize={totalOptimizedSize}
@@ -86,9 +72,7 @@ const Index = () => {
             onDownloadAll={handleDownloadAll}
             canDownload={canDownload}
           />
-        </>
       )}
-      {console.log("Index: Component rendering finished.")}
     </div>
   );
 };

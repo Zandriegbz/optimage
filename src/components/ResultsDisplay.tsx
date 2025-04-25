@@ -1,8 +1,8 @@
 import React from 'react';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { formatBytes } from "@/lib/utils";
-import type { OptimizedImage } from '@/hooks/useImageOptimizer'; // Import the type
+import { formatBytes } from "@/lib/utils"; // Correctly import the exported function
+import type { OptimizedImage } from '@/hooks/useImageOptimizer';
 
 interface ResultsDisplayProps {
   optimizedImages: OptimizedImage[];
@@ -21,9 +21,8 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
   onDownloadAll,
   canDownload
 }) => {
-  // Add check for null/undefined optimizedImages array as well
   if (!optimizedImages || optimizedImages.length === 0) {
-    return null; // Don't render anything if there are no results yet
+    return null;
   }
 
   return (
@@ -36,7 +35,6 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
       </CardHeader>
       <CardContent className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
         {optimizedImages.map((imgData, index) => {
-           // Calculate reduction safely to avoid division by zero
            const reductionPercent = imgData.originalSize > 0
              ? (((imgData.originalSize - imgData.optimizedSize) / imgData.originalSize) * 100).toFixed(1)
              : '0.0';
@@ -44,7 +42,6 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
            return (
             <Card key={index}>
               <CardHeader className="p-2">
-                {/* Ensure previewUrl is valid before rendering */}
                 {imgData.previewUrl ? (
                    <img src={imgData.previewUrl} alt={`Optimized ${imgData.file.name}`} className="rounded-md object-contain h-32 w-full" />
                 ) : (
@@ -57,7 +54,6 @@ export const ResultsDisplay: React.FC<ResultsDisplayProps> = ({
                 <p className="font-medium truncate" title={imgData.file.name}>{imgData.file.name}</p>
                 <p>Original: {formatBytes(imgData.originalSize)}</p>
                 <p>Optimized: {formatBytes(imgData.optimizedSize)}</p>
-                {/* Use the safely calculated percentage */}
                 <p>Reduction: {reductionPercent}%</p>
               </CardContent>
             </Card>
