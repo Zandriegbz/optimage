@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react"; // Added useEffect for potential cleanup logging
 import imageCompression from 'browser-image-compression';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
@@ -13,54 +13,64 @@ export interface OptimizedImage {
 }
 
 export function useImageOptimizer() {
+  console.log("useImageOptimizer: Hook initializing..."); // Log hook start
+
   const [files, setFiles] = useState<File[]>([]);
   const [optimizedImages, setOptimizedImages] = useState<OptimizedImage[]>([]);
-  const [quality, setQuality] = useState(0.6); // Default quality
-  const [maxWidthOrHeight, setMaxWidthOrHeight] = useState(1920); // Default max dimension
+  const [quality, setQuality] = useState(0.6);
+  const [maxWidthOrHeight, setMaxWidthOrHeight] = useState(1920);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  console.log("useImageOptimizer: Initial state set"); // Log after state init
+
   const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log("useImageOptimizer: handleFileChange triggered");
     if (event.target.files) {
       setFiles(Array.from(event.target.files));
-      setOptimizedImages([]); // Reset optimized images
-      setProgress(0); // Reset progress
-      // Clear the input value to allow selecting the same file(s) again
+      setOptimizedImages([]);
+      setProgress(0);
       event.target.value = '';
+      console.log("useImageOptimizer: Files set, count:", event.target.files.length);
     }
   }, []);
 
   const handleOptimize = useCallback(async () => {
+    console.log("useImageOptimizer: handleOptimize triggered");
     if (files.length === 0) {
       toast.error("Please select files first.");
       return;
     }
 
+    // Revoke previous URLs before starting new optimization
+    console.log("useImageOptimizer: Revoking old preview URLs...");
+    optimizedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
+    console.log("useImageOptimizer: Old URLs revoked.");
+
+
     setIsOptimizing(true);
-    setOptimizedImages([]);
+    setOptimizedImages([]); // Clear previous results immediately
     setProgress(0);
     const optimizedResults: OptimizedImage[] = [];
     const totalFiles = files.length;
 
     const options = {
-      maxSizeMB: 1, // Required, but initialQuality takes precedence
+      maxSizeMB: 1,
       maxWidthOrHeight: maxWidthOrHeight,
       useWebWorker: true,
       initialQuality: quality,
-      // We don't use per-file progress here, calculate overall progress below
-      // onProgress: (p: number) => {},
     };
+
+    console.log(`useImageOptimizer: Starting optimization for ${totalFiles} files with options:`, options);
 
     for (let i = 0; i < totalFiles; i++) {
       const file = files[i];
+      const currentProgress = Math.round(((i + 1) / totalFiles) * 100);
       try {
-        console.log(`Optimizing ${file.name} with quality ${quality} and max dimension ${maxWidthOrHeight}`);
+        console.log(`useImageOptimizer: Optimizing ${file.name}...`);
         const compressedFile = await imageCompression(file, options);
-        console.log(`Original size: ${formatBytes(file.size)}`);
-        console.log(`Compressed size: ${formatBytes(compressedFile.size)}`);
-
-        // Create a preview URL that needs to be revoked later
         const previewUrl = URL.createObjectURL(compressedFile);
+        console.log(`useImageOptimizer: Optimized ${file.name}. Original: ${file.size}, Compressed: ${compressedFile.size}`);
 
         optimizedResults.push({
           file: new File([compressedFile], file.name, { type: compressedFile.type }),
@@ -70,28 +80,27 @@ export function useImageOptimizer() {
         });
 
       } catch (error) {
-        console.error(`Error compressing file ${file.name}:`, error);
+        console.error(`useImageOptimizer: Error compressing file ${file.name}:`, error);
         toast.error(`Failed to optimize ${file.name}. Skipping.`);
       } finally {
-         // Update overall progress regardless of success or failure
-         setProgress(Math.round(((i + 1) / totalFiles) * 100));
+         setProgress(currentProgress); // Update progress
+         console.log(`useImageOptimizer: Progress updated to ${currentProgress}%`);
       }
     }
 
-     // Revoke previous preview URLs before setting new ones
-     optimizedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
-
     setOptimizedImages(optimizedResults);
     setIsOptimizing(false);
+    console.log("useImageOptimizer: Optimization finished. Results count:", optimizedResults.length);
 
     if (optimizedResults.length > 0) {
       toast.success(`Optimization complete for ${optimizedResults.length} image(s).`);
     } else if (files.length > 0) {
        toast.error("Optimization failed for all images.");
     }
-  }, [files, quality, maxWidthOrHeight, optimizedImages]); // Added optimizedImages dependency for cleanup
+  }, [files, quality, maxWidthOrHeight, optimizedImages]); // Keep optimizedImages dependency for cleanup
 
   const handleDownloadAll = useCallback(() => {
+    console.log("useImageOptimizer: handleDownloadAll triggered");
     if (optimizedImages.length === 0) {
       toast.error("No optimized images to download.");
       return;
@@ -103,14 +112,16 @@ export function useImageOptimizer() {
     });
 
     toast.info("Creating zip file...");
+    console.log("useImageOptimizer: Generating zip file...");
 
     zip.generateAsync({ type: "blob" })
       .then((content) => {
         saveAs(content, "optimized_images.zip");
         toast.success("Downloading zip file...");
+        console.log("useImageOptimizer: Zip file download initiated.");
       })
       .catch(err => {
-        console.error("Error creating zip file:", err);
+        console.error("useImageOptimizer: Error creating zip file:", err);
         toast.error("Failed to create zip file.");
       });
   }, [optimizedImages]);
@@ -119,18 +130,8 @@ export function useImageOptimizer() {
   const totalOptimizedSize = useMemo(() => optimizedImages.reduce((acc, curr) => acc + curr.optimizedSize, 0), [optimizedImages]);
   const totalReduction = useMemo(() => totalOriginalSize > 0 ? ((totalOriginalSize - totalOptimizedSize) / totalOriginalSize) * 100 : 0, [totalOriginalSize, totalOptimizedSize]);
 
-  // Cleanup object URLs on unmount or when optimizedImages change
-  // Note: This cleanup runs when the component using the hook unmounts.
-  // We also added cleanup within handleOptimize before setting new images.
-//   useEffect(() => {
-//     return () => {
-//       optimizedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
-//     };
-//   }, [optimizedImages]);
-  // Commenting out useEffect cleanup as it might revoke URLs too early if the hook instance persists across renders differently than expected. Cleanup in handleOptimize is safer.
-
-
-  return {
+  // Log hook return values
+  const returnValues = {
     files,
     optimizedImages,
     quality,
@@ -148,4 +149,18 @@ export function useImageOptimizer() {
     canOptimize: files.length > 0 && !isOptimizing,
     canDownload: optimizedImages.length > 0 && !isOptimizing,
   };
+  console.log("useImageOptimizer: Returning values:", returnValues);
+
+  // Optional: Add effect for cleanup logging if needed
+  useEffect(() => {
+    console.log("useImageOptimizer: Effect triggered (mount/update)");
+    return () => {
+      console.log("useImageOptimizer: Cleanup effect triggered (unmount/before update)");
+      // It's crucial to revoke URLs here if the component unmounts unexpectedly
+      // optimizedImages.forEach(img => URL.revokeObjectURL(img.previewUrl));
+      // Be cautious with cleanup here - revoking in handleOptimize might be safer
+    };
+  }, []); // Run only on mount/unmount
+
+  return returnValues;
 }
