@@ -139,7 +139,14 @@ const Index: React.FC = () => {
     setIsProcessing(true); // Set global processing flag
 
     const promises = filesToProcess.map(async (fileState) => {
-      if (fileState.status === 'error') return; // Don't reprocess errors automatically
+      // Don't re-process files already done or in error unless forced
+      if (fileState.status === 'done' || fileState.status === 'error') {
+          // If we need to reprocess 'done' files (e.g., settings changed),
+          // we'd need slightly different logic here or in triggerReprocessing.
+          // For now, assume processFiles is called for new files or explicit reprocessing.
+          // If it's a new file, it will be 'pending'.
+          if (fileState.status !== 'pending') return;
+      }
 
       let currentDims = fileState.originalDimensions;
       if (!currentDims) {
@@ -161,24 +168,19 @@ const Index: React.FC = () => {
     await Promise.allSettled(promises);
     console.log(`Finished processing batch.`);
     setIsProcessing(false); // Clear global processing flag
-  // processFiles depends on the settings state variables directly now
-  }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]);
+  }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]); // isProcessing added
 
 
   // This function triggers the actual reprocessing
   const triggerReprocessing = useCallback(() => {
-      // Reprocess files that are 'done' or 'pending'
-      // Error files won't be reprocessed automatically by settings changes
+      // Reprocess files that are 'done' or 'pending' (new files might be pending)
       const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
       if (applicableFiles.length > 0 && !isProcessing) {
           console.log("Settings committed, reprocessing applicable files...");
-          // processFiles will use the latest settings because it's redefined when settings change
           processFiles(applicableFiles);
       } else if (isProcessing) {
           console.log("Settings committed, but processing is ongoing. Skipping reprocess.");
       }
-  // Now depends on processFiles, which itself depends on the settings.
-  // This ensures triggerReprocessing always calls the latest version of processFiles.
   }, [imageFiles, isProcessing, processFiles]);
 
 
@@ -195,11 +197,12 @@ const Index: React.FC = () => {
     });
 
     if (newImageFiles.length === 0) { event.target.value = ''; return; }
+    // Append new files, existing ones remain
     setImageFiles(current => [...current, ...newImageFiles]);
-    await new Promise(resolve => setTimeout(resolve, 0));
-    await processFiles(newImageFiles);
+    await new Promise(resolve => setTimeout(resolve, 0)); // Allow state to update
+    await processFiles(newImageFiles); // Process only the newly added files
     event.target.value = '';
-  }, [processFiles]);
+  }, [processFiles]); // processFiles dependency is correct
 
   // Slider handlers now only update state for visual feedback
   const handleQualityChange = (value: number[]) => { setJpegQuality(value[0]); };
@@ -208,8 +211,7 @@ const Index: React.FC = () => {
   // Switch handler triggers immediate reprocessing
   const handleResizingChangeLossy = (checked: boolean) => {
     setEnableResizingLossy(checked);
-    // Use triggerReprocessing which calls the latest processFiles
-    triggerReprocessing();
+    triggerReprocessing(); // Use the common trigger function
   };
 
 
@@ -283,8 +285,9 @@ const Index: React.FC = () => {
   const totalFiles = imageFiles.length;
   const completedFiles = imageFiles.filter(f => f.status === 'done').length;
   const errorFiles = imageFiles.filter(f => f.status === 'error').length;
+  // Calculate processing count based on state, not just global flag
   const processingFilesCount = imageFiles.filter(f => f.status === 'compressing' || f.status === 'loading_dims').length;
-  const isActuallyProcessing = processingFilesCount > 0;
+  const isActuallyProcessing = processingFilesCount > 0; // More accurate check
 
   const canDownload = completedFiles > 0 && !isActuallyProcessing;
   const canReset = totalFiles > 0 && !isActuallyProcessing;
@@ -324,8 +327,8 @@ const Index: React.FC = () => {
                             id="quality-slider"
                             min={0.05} max={1} step={0.05}
                             value={[jpegQuality]}
-                            onValueChange={handleQualityChange} // Updates state/label only
-                            onValueCommit={triggerReprocessing} // Triggers processing on release
+                            onValueChange={handleQualityChange}
+                            onValueCommit={triggerReprocessing}
                             disabled={isActuallyProcessing}
                          />
                       </div>
@@ -343,8 +346,8 @@ const Index: React.FC = () => {
                       id="dimension-slider-png"
                       min={320} max={MAX_SLIDER_DIMENSION} step={10}
                       value={[pngMaxDimension]}
-                      onValueChange={handlePngDimensionChange} // Updates state/label only
-                      onValueCommit={triggerReprocessing} // Triggers processing on release
+                      onValueChange={handlePngDimensionChange}
+                      onValueCommit={triggerReprocessing}
                       disabled={isActuallyProcessing}
                    />
                 </TabsContent>
@@ -352,10 +355,15 @@ const Index: React.FC = () => {
             </div>
           )}
 
+          {/* Status Indicators - Removed global one */}
+          {/* {isProcessing && ( <div className="flex items-center justify-center space-x-2 pt-4 text-blue-600"><Loader2 className="h-5 w-5 animate-spin" /><span>Processing {processingFilesCount} of {totalFiles}...</span></div> )} */}
+
           {/* Image List Area */}
           {totalFiles > 0 && (
             <div className="border-t pt-6 space-y-4">
                <h3 className="text-lg font-semibold flex items-center justify-center gap-2"><Files className="w-5 h-5" /> 3. Files ({totalFiles})</h3>
+
+               {/* Conditional Rendering: Loading Indicator or File Grid */}
                {isActuallyProcessing ? (
                   <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
                      <Loader2 className="h-12 w-12 animate-spin text-blue-500 mb-4" />
@@ -391,6 +399,8 @@ const Index: React.FC = () => {
                                     <div className="flex-grow flex justify-center items-center px-1">
                                        {isDone && <ArrowRight className={cn("h-3 w-3", sizeReduced ? "text-green-500" : sizeIncreased ? "text-red-500" : "text-gray-400")} />}
                                        {file.status === 'error' && (<FileWarning className="h-3 w-3 text-red-500" />)}
+                                       {/* Individual loaders are removed as the whole section is replaced */}
+                                       {/* {(file.status === 'compressing' || file.status === 'loading_dims') && (<Loader2 className="h-3 w-3 animate-spin text-blue-500" />)} */}
                                        {file.status === 'pending' && (<span className="text-xs text-gray-500">...</span>)}
                                     </div>
                                     <span className={cn(
@@ -399,8 +409,9 @@ const Index: React.FC = () => {
                                         isDone && sizeIncreased && "text-red-600",
                                         isDone && !sizeReduced && !sizeIncreased && "text-gray-500",
                                         file.status === 'error' && "text-red-600",
-                                        (file.status === 'compressing' || file.status === 'loading_dims') && "text-transparent", // Hide placeholder during processing
-                                        (file.status === 'pending') && "text-gray-500" // Show placeholder if pending
+                                        // Show placeholder text if pending, hide if loading/compressing
+                                        (file.status === 'compressing' || file.status === 'loading_dims') && "text-transparent",
+                                        (file.status === 'pending') && "text-gray-500"
                                     )}>
                                         {isDone ? formatBytes(file.compressedSize) : file.status === 'error' ? 'Error' : '...'}
                                     </span>
