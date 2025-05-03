@@ -1,8 +1,8 @@
 # Optimage
 
-![License](https://img.shields.io/github/license/your-username/Optimage)
-![Build Status](https://img.shields.io/github/actions/workflow/status/your-username/Optimage/build.yml?branch=main)
-![Version](https://img.shields.io/github/package-json/v/your-username/Optimage)
+![License](https://img.shields.io/github/license/Zandriegbz/optimage)
+![Build Status](https://img.shields.io/github/actions/workflow/status/Zandriegbz/optimage/build.yml?branch=main)
+![Version](https://img.shields.io/github/package-json/v/Zandriegbz/optimage)
 
 The **Optimage** is a modern, feature-rich web application designed for efficient image compression and visualization. Built with **React**, **TypeScript**, and **Tailwind CSS**, it provides a responsive and visually appealing user interface while maintaining high performance and modularity.
 
