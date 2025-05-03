@@ -329,8 +329,8 @@ const Index: React.FC = () => {
       </div>
       <Card className="w-full max-w-4xl">
         <CardHeader>
-          <CardTitle>Bulk Image Optimizer</CardTitle>
-          <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download individually.</CardDescription>
+          <CardTitle>Drag, Drop, Optimize – It’s That Simple</CardTitle>
+          <CardDescription>Upload multiple JPG, PNG, or WEBP images. Adjust settings and download all at once.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Input */}
@@ -473,7 +473,7 @@ const Index: React.FC = () => {
         <Terminal className="h-4 w-4" />
         <AlertTitle>How it works</AlertTitle>
         <AlertDescription>
-          Upload multiple images. Use the global settings to control compression. Download all successfully compressed images individually. All processing happens in your browser.
+          Upload multiple images. Use the global settings to control compression. Download all successfully compressed images all at once. All processing happens in your browser.
         </AlertDescription>
       </Alert>
     </div>
