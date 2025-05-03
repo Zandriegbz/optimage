@@ -5,14 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Terminal, Download, Image as ImageIcon, FileWarning, Settings2, Ruler, Files, XCircle, CheckCircle2, Loader2, FileArchive, ArrowRight, RotateCcw, PartyPopper } from "lucide-react";
+import { Terminal, Download, FileWarning, Settings2, Ruler, Files, XCircle, Loader2, ArrowRight, RotateCcw, PartyPopper } from "lucide-react";
 import imageCompression from 'browser-image-compression';
 import { saveAs } from 'file-saver';
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-// import JSZip from 'jszip'; // Removed JSZip import
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -49,15 +47,6 @@ const formatBytes = (bytes: number | null, decimals = 2) => {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 };
 
-const getImageDimensions = (fileUrl: string): Promise<{ width: number; height: number }> => {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
-    img.onerror = (err) => reject(new Error("Could not load image to get dimensions."));
-    img.src = fileUrl;
-  });
-};
-
 // Function to get file type label AND color classes
 const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: string; controlClassName: string; tabTriggerClassName: string } => {
    const subtype = mimeType?.split('/')[1] || 'unknown';
@@ -71,6 +60,16 @@ const getFileTypeInfo = (mimeType: string): { label: string; badgeClassName: str
    }
 };
 
+// Function to get image dimensions
+const getImageDimensions = (fileUrl: string): Promise<{ width: number; height: number }> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => reject(new Error("Could not load image to get dimensions."));
+    img.src = fileUrl;
+  });
+};
+
 
 // --- Component ---
 const Index: React.FC = () => {
@@ -82,7 +81,6 @@ const Index: React.FC = () => {
   const [jpegQuality, setJpegQuality] = useState<number>(0.7);
   const [enableResizingLossy, setEnableResizingLossy] = useState<boolean>(false);
   const [pngMaxDimension, setPngMaxDimension] = useState<number>(DEFAULT_MAX_DIMENSION);
-  const [maxSizeTarget, setMaxSizeTarget] = useState<number>(1);
 
   // Refs
   const objectUrlRefs = useRef<Record<string, { original: string | null, compressed: string | null }>>({});
@@ -97,21 +95,22 @@ const Index: React.FC = () => {
   };
 
   const runCompressionOnFile = async (fileState: ImageFileState): Promise<Partial<ImageFileState>> => {
-    const { id, originalFile, originalDimensions, originalType } = fileState;
+    const { id, originalFile, originalType } = fileState;
     updateFileState(id, { status: 'compressing', error: null });
 
     try {
-      const isLossyFormat = originalType === 'image/jpeg' || originalType === 'image/webp';
-      const isPngFormat = originalType === 'image/png';
-      let options: imageCompression.Options = { useWebWorker: true };
+      let options: Record<string, any> = { useWebWorker: true };
 
-      if (isLossyFormat) {
-        options = { ...options, maxSizeMB: maxSizeTarget, maxWidthOrHeight: enableResizingLossy ? DEFAULT_MAX_DIMENSION : undefined, initialQuality: jpegQuality };
-      } else if (isPngFormat) {
+      if (originalType === 'image/jpeg' || originalType === 'image/webp') {
+        options = { ...options, maxSizeMB: 1, initialQuality: jpegQuality };
+      } else if (originalType === 'image/png') {
         options = { ...options, maxWidthOrHeight: pngMaxDimension < MAX_SLIDER_DIMENSION ? pngMaxDimension : undefined };
       }
 
-      const activeOptions = Object.entries(options).reduce((acc, [key, value]) => { if (value !== undefined) acc[key] = value; return acc; }, {} as imageCompression.Options);
+      const activeOptions = Object.entries(options).reduce((acc: Record<string, any>, [key, value]) => {
+        if (value !== undefined) acc[key] = value;
+        return acc;
+      }, {} as Record<string, any>);
       // console.log(`Compressing ${originalFile.name} (${id}) with options:`, activeOptions);
       // const startTime = performance.now();
       const compressedFile = await imageCompression(originalFile, activeOptions);
@@ -135,53 +134,81 @@ const Index: React.FC = () => {
 
   const processFiles = useCallback(async (filesToProcess: ImageFileState[]) => {
     if (filesToProcess.length === 0 || isProcessing) return;
-    console.log(`Processing ${filesToProcess.length} files...`);
+    console.log(`Processing ${filesToProcess.length} files sequentially...`);
     setIsProcessing(true); // Set global processing flag
 
-    const promises = filesToProcess.map(async (fileState) => {
-      // Don't re-process files already done or in error unless forced
-      if (fileState.status === 'done' || fileState.status === 'error') {
-          // If we need to reprocess 'done' files (e.g., settings changed),
-          // we'd need slightly different logic here or in triggerReprocessing.
-          // For now, assume processFiles is called for new files or explicit reprocessing.
-          // If it's a new file, it will be 'pending'.
-          if (fileState.status !== 'pending') return;
-      }
-
-      let currentDims = fileState.originalDimensions;
-      if (!currentDims) {
-        try {
-          // console.log(`Loading dimensions for ${fileState.id}`);
-          updateFileState(fileState.id, { status: 'loading_dims' });
-          currentDims = await getImageDimensions(fileState.originalImageUrl);
-          updateFileState(fileState.id, { originalDimensions: currentDims });
-          // console.log(`Dimensions loaded for ${fileState.id}: ${currentDims.width}x${currentDims.height}`);
-        } catch (dimError) {
-          console.error(`Dimension loading error for ${fileState.originalFile.name} (${fileState.id}):`, dimError);
-          updateFileState(fileState.id, { status: 'error', error: 'Failed to load image dimensions.' }); return;
+    for (const fileState of filesToProcess) {
+        // Skip files already processed or in error unless forced
+        if (fileState.status === 'done' || fileState.status === 'error') {
+            continue;
         }
-      }
-      const updates = await runCompressionOnFile({ ...fileState, originalDimensions: currentDims });
-      updateFileState(fileState.id, updates);
-    });
 
-    await Promise.allSettled(promises);
-    console.log(`Finished processing batch.`);
+        let currentDims = fileState.originalDimensions;
+        if (!currentDims) {
+            try {
+                // Load dimensions for the image
+                updateFileState(fileState.id, { status: 'loading_dims' });
+                currentDims = await getImageDimensions(fileState.originalImageUrl);
+                updateFileState(fileState.id, { originalDimensions: currentDims });
+            } catch (dimError) {
+                console.error(`Dimension loading error for ${fileState.originalFile.name} (${fileState.id}):`, dimError);
+                updateFileState(fileState.id, { status: 'error', error: 'Failed to load image dimensions.' });
+                continue;
+            }
+        }
+
+        const updates = await runCompressionOnFile({ ...fileState, originalDimensions: currentDims });
+        updateFileState(fileState.id, updates);
+    }
+
+    console.log(`Finished processing all files sequentially.`);
     setIsProcessing(false); // Clear global processing flag
-  }, [enableResizingLossy, jpegQuality, maxSizeTarget, pngMaxDimension, isProcessing]); // isProcessing added
+  }, [enableResizingLossy, jpegQuality, pngMaxDimension, isProcessing]); // isProcessing added
 
 
   // This function triggers the actual reprocessing
   const triggerReprocessing = useCallback(() => {
-      // Reprocess files that are 'done' or 'pending' (new files might be pending)
-      const applicableFiles = imageFiles.filter(f => f.status === 'pending' || f.status === 'done');
-      if (applicableFiles.length > 0 && !isProcessing) {
-          console.log("Settings committed, reprocessing applicable files...");
-          processFiles(applicableFiles);
-      } else if (isProcessing) {
-          console.log("Settings committed, but processing is ongoing. Skipping reprocess.");
+      // Identify files that are already processed ('done')
+      const filesToReprocessIds = imageFiles
+          .filter(f => f.status === 'done')
+          .map(f => f.id);
+
+      if (filesToReprocessIds.length > 0) {
+          // Update the state to reset relevant files back to 'pending'
+          // Clear previous compression results to force re-computation
+          setImageFiles(currentFiles =>
+              currentFiles.map(file =>
+                  filesToReprocessIds.includes(file.id)
+                      ? { ...file, status: 'pending', compressedFile: null, compressedImageUrl: null, compressedSize: null, compressedType: null, compressedDimensions: null, error: null }
+                      : file
+              )
+          );
+
+          // Use setTimeout to ensure the state update is processed before starting the compression
+          // This prevents potential race conditions
+          setTimeout(() => {
+              // It's safer to read the latest state inside setTimeout
+              setImageFiles(currentFiles => {
+                  const applicableFiles = currentFiles.filter(f => f.status === 'pending'); // Get all pending files (including the reset ones)
+                  if (applicableFiles.length > 0 && !isProcessing) {
+                      console.log("Slider value committed, reprocessing applicable files...");
+                      processFiles(applicableFiles);
+                  } else {
+                      console.log("Slider value committed, but processing is ongoing or no files to reprocess.");
+                  }
+                  return currentFiles; // Important: return the state in the updater function
+              });
+          }, 0);
+      } else {
+          // If no 'done' files, check for 'pending' files (e.g., newly added but not yet processed)
+          const pendingFiles = imageFiles.filter(f => f.status === 'pending');
+          if (pendingFiles.length > 0 && !isProcessing) {
+               console.log("Slider value committed, processing pending files...");
+               processFiles(pendingFiles);
+          }
+          // No need to log if nothing needs reprocessing
       }
-  }, [imageFiles, isProcessing, processFiles]);
+  }, [imageFiles, isProcessing, processFiles, setImageFiles]); // Added setImageFiles to dependencies
 
 
   const handleImageUpload = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -297,6 +324,9 @@ const Index: React.FC = () => {
 
   return (
     <div className="container mx-auto p-4 flex flex-col items-center space-y-6">
+      <div className="flex justify-center p-4">
+        <img src="/assets/optimageLogo.png" alt="Bulk Image Optimizer Logo" className="h-16" />
+      </div>
       <Card className="w-full max-w-4xl">
         <CardHeader>
           <CardTitle>Bulk Image Optimizer</CardTitle>
@@ -347,7 +377,7 @@ const Index: React.FC = () => {
                       min={320} max={MAX_SLIDER_DIMENSION} step={10}
                       value={[pngMaxDimension]}
                       onValueChange={handlePngDimensionChange}
-                      onValueCommit={triggerReprocessing}
+                      onValueCommit={triggerReprocessing} // Ensure this handler is present
                       disabled={isActuallyProcessing}
                    />
                 </TabsContent>
