@@ -45,18 +45,3 @@ The **Optimage** is a modern, feature-rich web application designed for efficien
 - **Build Tool**: Vite for fast development and optimized builds.
 - **Charting**: Recharts for interactive data visualization.
 
----
-
-## 📂 **Project Structure**
-
-Optimage/
-├── src/
-│ ├── components/
-│ │ ├── ui/ # Reusable UI components (e.g., Button, Input, Textarea)
-│ │ └── charts/ # Chart-related components
-│ ├── lib/ # Utility functions
-│ ├── styles/ # Global styles and Tailwind configuration
-│ └── App.tsx # Main application entry point
-├── public/ # Static assets
-├── .github/ # GitHub workflows and instructions
-└── package.json # Project dependencies and scripts
